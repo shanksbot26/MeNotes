@@ -1,14 +1,31 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { Note, CreateNoteInput, UpdateNoteInput, ThemeMode } from '@/db/types';
 import { generateId } from '@/utils/id';
 
 let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+export function getEffectiveServerUrl(customUrl?: string): string {
+  const trimmed = (customUrl || '').trim();
+  if (trimmed) return trimmed;
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
+  return '';
+}
+
+export function getEffectiveSyncToken(customToken?: string): string {
+  const trimmed = (customToken || '').trim();
+  if (trimmed) return trimmed;
+  return 'akuiki26';
+}
+
 function scheduleSyncDebounced(get: () => NotesState) {
   const state = get();
-  if (!state.serverUrl || !state.autoSync) return;
+  const effectiveUrl = getEffectiveServerUrl(state.serverUrl);
+  if (!effectiveUrl || !state.autoSync) return;
 
   if (syncDebounceTimer) {
     clearTimeout(syncDebounceTimer);
@@ -17,28 +34,34 @@ function scheduleSyncDebounced(get: () => NotesState) {
   syncDebounceTimer = setTimeout(async () => {
     try {
       const currentState = get();
-      if (!currentState.serverUrl || !currentState.autoSync) return;
+      const currentUrl = getEffectiveServerUrl(currentState.serverUrl);
+      if (!currentUrl || !currentState.autoSync) return;
 
       const { syncNotesWithServer } = await import('@/utils/sync');
+      const deletionsToSync = [...currentState.pendingDeletions];
+
       const result = await syncNotesWithServer({
-        serverUrl: currentState.serverUrl,
-        token: currentState.syncToken,
+        serverUrl: currentUrl,
+        token: getEffectiveSyncToken(currentState.syncToken),
         localNotes: currentState.notes,
+        deletedNotes: deletionsToSync,
         lastSyncTimestamp: currentState.lastSyncTimestamp || 0,
       });
 
       if (result.success) {
         currentState.mergeServerNotes(result.serverNotes as any);
+        currentState.clearPendingDeletions(deletionsToSync.map((d) => d.id));
         currentState.setSyncStatus(false, result.syncTimestamp);
       }
     } catch (err) {
       console.warn('Auto-sync notice:', err);
     }
-  }, 1200);
+  }, 400);
 }
 
 interface NotesState {
   notes: Note[];
+  pendingDeletions: { id: string; deletedAt: number }[];
   searchQuery: string;
   themeMode: ThemeMode;
   isHydrated: boolean;
@@ -61,6 +84,7 @@ interface NotesState {
 
   setServerConfig: (url: string, token: string, autoSync?: boolean) => void;
   setSyncStatus: (isSyncing: boolean, timestamp?: number) => void;
+  clearPendingDeletions: (syncedIds: string[]) => void;
   mergeServerNotes: (serverNotes: (Note & { deletedAt?: number })[]) => void;
   triggerSync: () => Promise<void>;
 
@@ -99,13 +123,14 @@ export const useNotesStore = create<NotesState>()(
   persist(
     (set, get) => ({
       notes: INITIAL_NOTES,
+      pendingDeletions: [],
       searchQuery: '',
       themeMode: 'system',
       isHydrated: false,
       sessionUnlockedContent: {},
 
       serverUrl: '',
-      syncToken: '',
+      syncToken: 'akuiki26',
       autoSync: true,
       lastSyncTimestamp: null,
       isSyncing: false,
@@ -144,22 +169,33 @@ export const useNotesStore = create<NotesState>()(
         }));
       },
 
+      clearPendingDeletions: (syncedIds: string[]) => {
+        set((state) => ({
+          pendingDeletions: state.pendingDeletions.filter((d) => !syncedIds.includes(d.id)),
+        }));
+      },
+
       triggerSync: async () => {
         const state = get();
-        if (!state.serverUrl) return;
+        const effectiveUrl = getEffectiveServerUrl(state.serverUrl);
+        if (!effectiveUrl) return;
 
         state.setSyncStatus(true);
         try {
           const { syncNotesWithServer } = await import('@/utils/sync');
+          const deletionsToSync = [...state.pendingDeletions];
+
           const result = await syncNotesWithServer({
-            serverUrl: state.serverUrl,
-            token: state.syncToken,
+            serverUrl: effectiveUrl,
+            token: getEffectiveSyncToken(state.syncToken),
             localNotes: state.notes,
+            deletedNotes: deletionsToSync,
             lastSyncTimestamp: state.lastSyncTimestamp || 0,
           });
 
           if (result.success) {
             state.mergeServerNotes(result.serverNotes as any);
+            state.clearPendingDeletions(deletionsToSync.map((d) => d.id));
             state.setSyncStatus(false, result.syncTimestamp);
           }
         } catch (err) {
@@ -259,12 +295,17 @@ export const useNotesStore = create<NotesState>()(
       },
 
       deleteNote: (id: string) => {
+        const now = Date.now();
         set((state) => {
           const updatedSession = { ...state.sessionUnlockedContent };
           delete updatedSession[id];
           return {
             notes: state.notes.filter((note) => note.id !== id),
             sessionUnlockedContent: updatedSession,
+            pendingDeletions: [
+              ...state.pendingDeletions.filter((d) => d.id !== id),
+              { id, deletedAt: now },
+            ],
           };
         });
 
@@ -318,6 +359,7 @@ export const useNotesStore = create<NotesState>()(
       partialize: (state) => ({
         // Persist notes and settings, exclude session keys and temporary loading
         notes: state.notes,
+        pendingDeletions: state.pendingDeletions,
         searchQuery: state.searchQuery,
         themeMode: state.themeMode,
         serverUrl: state.serverUrl,

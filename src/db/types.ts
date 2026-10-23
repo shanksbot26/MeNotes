@@ -8,6 +8,7 @@ export interface Note {
   isLocked?: boolean;
   color?: string;
   tags?: string[];
+  deletedAt?: number | null;
 }
 
 export type CreateNoteInput = {

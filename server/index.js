@@ -29,6 +29,20 @@ function authMiddleware(req, res, next) {
   next();
 }
 
+// SSE (Server-Sent Events) clients for instant realtime sync
+const sseClients = new Set();
+
+function broadcastEvent(type, payload = {}) {
+  const message = `data: ${JSON.stringify({ type, ...payload, timestamp: Date.now() })}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.write(message);
+    } catch (e) {
+      sseClients.delete(client);
+    }
+  }
+}
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({
@@ -37,6 +51,30 @@ app.get('/api/health', (req, res) => {
     version: '1.0.0',
     authRequired: Boolean(SYNC_SECRET),
     timestamp: Date.now(),
+  });
+});
+
+// SSE endpoint for instant live updates across devices
+app.get('/api/events', (req, res) => {
+  // Check auth if secret configured
+  if (SYNC_SECRET) {
+    const clientSecret = req.query.secret || req.headers['x-sync-secret'];
+    if (!clientSecret || clientSecret !== SYNC_SECRET) {
+      return res.status(401).end();
+    }
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+
+  res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: Date.now() })}\n\n`);
+  sseClients.add(res);
+
+  req.on('close', () => {
+    sseClients.delete(res);
   });
 });
 
@@ -57,6 +95,9 @@ app.post('/api/sync', authMiddleware, (req, res) => {
     const { clientNotes = [], lastSyncTimestamp = 0 } = req.body;
 
     const result = syncNotes(clientNotes, Number(lastSyncTimestamp) || 0);
+
+    // Broadcast instant update to all other connected devices!
+    broadcastEvent('notes_updated', { syncTimestamp: result.syncTimestamp });
 
     res.json({
       success: true,

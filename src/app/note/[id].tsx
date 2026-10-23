@@ -220,10 +220,8 @@ export default function NoteEditorScreen() {
 
   const handleDelete = () => {
     const executeDelete = () => {
-      if (isCreatedInStoreRef.current) {
-        deleteNote(currentId);
-        removeBiometricPin(currentId);
-      }
+      deleteNote(currentId);
+      removeBiometricPin(currentId);
       router.back();
     };
 

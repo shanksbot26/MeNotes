@@ -46,7 +46,13 @@ export function NoteCard({
 
         <View className="flex-row items-center gap-1">
           <Pressable
-            onPress={() => onTogglePin(note.id)}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              if ((e as any).nativeEvent?.stopPropagation) {
+                (e as any).nativeEvent.stopPropagation();
+              }
+              onTogglePin(note.id);
+            }}
             hitSlop={8}
             className={`p-1.5 rounded-lg ${
               note.isPinned
@@ -69,7 +75,13 @@ export function NoteCard({
           </Pressable>
 
           <Pressable
-            onPress={() => onDelete(note.id)}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              if ((e as any).nativeEvent?.stopPropagation) {
+                (e as any).nativeEvent.stopPropagation();
+              }
+              onDelete(note.id);
+            }}
             hitSlop={8}
             className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/50"
             accessibilityLabel="Hapus catatan"

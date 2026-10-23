@@ -1,5 +1,5 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import { View, Text, ScrollView, Platform } from 'react-native';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import { View, Text, ScrollView, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Header } from '@/components/Header';
@@ -8,7 +8,8 @@ import { NoteCard } from '@/components/NoteCard';
 import { EmptyState } from '@/components/EmptyState';
 import { FloatingActionButton } from '@/components/FloatingActionButton';
 import { UnlockModal } from '@/components/UnlockModal';
-import { useNotesStore } from '@/store/use-notes-store';
+import { useNotesStore, getEffectiveServerUrl } from '@/store/use-notes-store';
+import { listenRealtimeSyncEvents } from '@/utils/sync';
 import { Note } from '@/db/types';
 import { Pin } from 'lucide-react-native';
 
@@ -24,30 +25,38 @@ export default function HomeScreen() {
   const setSessionUnlockedContent = useNotesStore((state) => state.setSessionUnlockedContent);
 
   const serverUrl = useNotesStore((state) => state.serverUrl);
+  const syncToken = useNotesStore((state) => state.syncToken);
   const autoSync = useNotesStore((state) => state.autoSync);
   const triggerSync = useNotesStore((state) => state.triggerSync);
 
   const [unlockTarget, setUnlockTarget] = useState<Note | null>(null);
 
-  // Background Live Sync & Window Focus Listener for Realtime Sync
+  // Background Live Sync & SSE Listener for Realtime Multi-Device Sync
   useEffect(() => {
-    if (!serverUrl || !autoSync) return;
+    const effectiveUrl = getEffectiveServerUrl(serverUrl);
+    if (!effectiveUrl || !autoSync) return;
 
-    // Initial sync
+    // 1. Initial sync
     triggerSync().catch(() => {});
 
-    // Periodic poll every 5 seconds for live multi-device updates
+    // 2. Instant Realtime SSE (Server-Sent Events) listener
+    const cleanupSse = listenRealtimeSyncEvents(effectiveUrl, syncToken, () => {
+      triggerSync().catch(() => {});
+    });
+
+    // 3. Fallback Periodic poll every 5 seconds
     const pollInterval = setInterval(() => {
       triggerSync().catch(() => {});
     }, 5000);
 
-    // Sync on window focus / app return
+    // 4. Sync on window focus / app return
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const handleWindowFocus = () => {
         triggerSync().catch(() => {});
       };
       window.addEventListener('focus', handleWindowFocus);
       return () => {
+        cleanupSse();
         clearInterval(pollInterval);
         window.removeEventListener('focus', handleWindowFocus);
       };
@@ -65,11 +74,39 @@ export default function HomeScreen() {
       }
 
       return () => {
+        cleanupSse();
         clearInterval(pollInterval);
         sub?.remove();
       };
     }
-  }, [serverUrl, autoSync, triggerSync]);
+  }, [serverUrl, syncToken, autoSync, triggerSync]);
+
+  const handleDeleteNote = useCallback(
+    (id: string) => {
+      const targetNote = notes.find((n) => n.id === id);
+      const noteTitle = targetNote?.title || 'catatan ini';
+
+      const proceed = () => {
+        deleteNote(id);
+      };
+
+      if (Platform.OS === 'web') {
+        if (window.confirm(`Apakah Anda yakin ingin menghapus "${noteTitle}"?`)) {
+          proceed();
+        }
+      } else {
+        Alert.alert(
+          'Hapus Catatan',
+          `Apakah Anda yakin ingin menghapus "${noteTitle}"?`,
+          [
+            { text: 'Batal', style: 'cancel' },
+            { text: 'Hapus', style: 'destructive', onPress: proceed },
+          ]
+        );
+      }
+    },
+    [notes, deleteNote]
+  );
 
   // Filter notes based on search query
   const filteredNotes = useMemo(() => {
@@ -166,7 +203,7 @@ export default function HomeScreen() {
                           note={note}
                           onPress={handleOpenNote}
                           onTogglePin={togglePin}
-                          onDelete={deleteNote}
+                          onDelete={handleDeleteNote}
                         />
                       </View>
                     ))}
@@ -193,7 +230,7 @@ export default function HomeScreen() {
                           note={note}
                           onPress={handleOpenNote}
                           onTogglePin={togglePin}
-                          onDelete={deleteNote}
+                          onDelete={handleDeleteNote}
                         />
                       </View>
                     ))}
