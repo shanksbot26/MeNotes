@@ -8,10 +8,14 @@ services:
     ports:
       - "${PORT:-3000}:3000"
     volumes:
-      # Persistent SQLite database storage on host machine
-      - ./data:/app/data
+      # Persistent SQLite database storage (persists across container rebuilds)
+      - menotes_data:/app/data
     environment:
       - NODE_ENV=${NODE_ENV:-production}
       - PORT=3000
       - DATA_DIR=${DATA_DIR:-/app/data}
-      - SYNC_SECRET=${SYNC_SECRET:-}
+      - SYNC_SECRET=${SYNC_SECRET:-akuiki26}
+
+volumes:
+  menotes_data:
+    name: menotes_data

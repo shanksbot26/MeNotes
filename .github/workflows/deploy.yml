@@ -4,93 +4,114 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch: # Memungkinkan trigger manual dari tab Actions di GitHub
+  workflow_dispatch: # Memungkinkan deploy manual langsung dari tab Actions di GitHub
+
+# Pastikan hanya 1 deployment berjalan pada satu waktu untuk menghindari konflik container
+concurrency:
+  group: deploy-menotes
+  cancel-in-progress: false
 
 jobs:
-  # ========================================================
-  # Job 1: Quality Gate & Typecheck (CI)
-  # ========================================================
-  test-and-lint:
-    name: Code Quality & Typecheck
-    runs-on: ubuntu-latest
+  deploy:
+    name: Build & Deploy Container
+    runs-on: self-hosted
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: 'npm'
+          clean: false # Pertahankan konfigurasi lokal yang tidak di-track Git
 
-      - name: Install Client Dependencies
-        run: npm ci --legacy-peer-deps
-
-      - name: Run TypeScript Typecheck
-        run: npx tsc --noEmit
-
-      - name: Verify Server Dependencies
-        working-directory: ./server
-        run: npm ci
-
-  # ========================================================
-  # Job 2: Continuous Deployment via SSH (CD)
-  # ========================================================
-  deploy-ssh:
-    name: Deploy to Self-Hosted Server (SSH)
-    needs: test-and-lint
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Execute Remote Deployment via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
-          script_stop: true
-          script: |
-            set -e
-            echo "🚀 [CI/CD] Deploying MeNotes to Self-Hosted Server..."
-            
-            # Pindah ke direktori MeNotes di server (default: /opt/menotes)
-            TARGET_DIR="${{ secrets.DEPLOY_PATH || '/opt/menotes' }}"
-            if [ ! -d "$TARGET_DIR" ]; then
-              echo "❌ Error: Direktori $TARGET_DIR tidak ditemukan di server!"
-              echo "Pastikan Anda sudah meng-clone repo MeNotes ke $TARGET_DIR terlebih dahulu."
-              exit 1
-            fi
-            
-            cd "$TARGET_DIR"
-
-            echo "📥 [1/4] Menarik perubahan kode terbaru dari branch main..."
-            git fetch origin main
-            git reset --hard origin/main
-
-            echo "🐳 [2/4] Membangun ulang dan menyalakan container Docker..."
-            docker compose up -d --build --remove-orphans
-
-            echo "⏳ [3/4] Menunggu layanan backend aktif..."
-            sleep 6
-
-            echo "🔍 [4/4] Memeriksa status kesehatan aplikasi (/api/health)..."
-            # Deteksi port dari .env jika ada, fallback ke 3000
-            PORT_IN_ENV=$(grep -E '^PORT=' .env 2>/dev/null | cut -d '=' -f2 | tr -d ' ' || true)
-            HOST_PORT="${PORT_IN_ENV:-3000}"
-            
-            HEALTH_URL="http://127.0.0.1:${HOST_PORT}/api/health"
-            echo "Memeriksa: $HEALTH_URL"
-            
-            if curl -fsS "$HEALTH_URL" > /dev/null 2>&1; then
-              echo "✅ Healthcheck sukses! MeNotes berhasil berjalan di port $HOST_PORT."
+      - name: Setup Environment (.env)
+        run: |
+          echo "⚙️ [1/5] Mempersiapkan file konfigurasi environment (.env)..."
+          
+          # Buat file .env jika belum ada dari template .env.example
+          if [ ! -f .env ]; then
+            if [ -f .env.example ]; then
+              cp .env.example .env
+              echo "✅ File .env berhasil dibuat dari .env.example"
             else
-              echo "⚠️ Gagal menghubungi $HEALTH_URL, menampilkan log Docker..."
-              docker compose logs --tail=40
-              exit 1
+              touch .env
             fi
+          fi
 
-            echo "🧹 Membersihkan image lama yang tidak terpakai..."
-            docker image prune -f
+          # Update SYNC_SECRET jika diatur di GitHub Repository Secrets
+          if [ -n "${{ secrets.SYNC_SECRET }}" ]; then
+            if grep -q "^SYNC_SECRET=" .env; then
+              sed -i "s/^SYNC_SECRET=.*/SYNC_SECRET=${{ secrets.SYNC_SECRET }}/" .env
+            else
+              echo "SYNC_SECRET=${{ secrets.SYNC_SECRET }}" >> .env
+            fi
+            echo "🔐 SYNC_SECRET diperbarui dari GitHub Secrets."
+          fi
 
-            echo "🎉 MeNotes CI/CD Deployment Selesai dengan Sukses!"
+          # Update PORT jika diatur di GitHub Repository Secrets
+          if [ -n "${{ secrets.PORT }}" ]; then
+            if grep -q "^PORT=" .env; then
+              sed -i "s/^PORT=.*/PORT=${{ secrets.PORT }}/" .env
+            else
+              echo "PORT=${{ secrets.PORT }}" >> .env
+            fi
+            echo "🌐 PORT diperbarui dari GitHub Secrets."
+          fi
+
+          # Pastikan nilai standar selalu ada
+          grep -q "^PORT=" .env || echo "PORT=3000" >> .env
+          grep -q "^NODE_ENV=" .env || echo "NODE_ENV=production" >> .env
+          grep -q "^DATA_DIR=" .env || echo "DATA_DIR=/app/data" >> .env
+          grep -q "^SYNC_SECRET=" .env || echo "SYNC_SECRET=akuiki26" >> .env
+
+      - name: Verify Docker & Docker Compose
+        run: |
+          echo "🔍 [2/5] Memeriksa instalasi Docker & Docker Compose..."
+          docker --version
+          
+          if docker compose version >/dev/null 2>&1; then
+            echo "DOCKER_COMPOSE_CMD=docker compose" >> $GITHUB_ENV
+            echo "✅ Menggunakan 'docker compose' (v2)"
+          elif command -v docker-compose >/dev/null 2>&1; then
+            echo "DOCKER_COMPOSE_CMD=docker-compose" >> $GITHUB_ENV
+            echo "✅ Menggunakan 'docker-compose' (v1)"
+          else
+            echo "❌ Docker Compose tidak ditemukan di server self-hosted!"
+            exit 1
+          fi
+
+      - name: Build & Start Container
+        run: |
+          echo "🐳 [3/5] Membangun ulang dan menyalakan container MeNotes..."
+          $DOCKER_COMPOSE_CMD up -d --build --remove-orphans
+
+      - name: Verify Health Check
+        run: |
+          echo "🩺 [4/5] Memeriksa status kesehatan aplikasi (/api/health)..."
+          PORT_VAL=$(grep -E '^PORT=' .env | cut -d '=' -f2 | tr -d ' ' || echo "3000")
+          HEALTH_URL="http://127.0.0.1:${PORT_VAL}/api/health"
+          echo "Target Health Check: $HEALTH_URL"
+
+          SUCCESS=0
+          for i in $(seq 1 15); do
+            echo "Memeriksa status ($i/15)..."
+            if curl -fsS "$HEALTH_URL" > /dev/null 2>&1; then
+              SUCCESS=1
+              break
+            fi
+            sleep 3
+          done
+
+          if [ $SUCCESS -eq 1 ]; then
+            echo "===================================================="
+            echo "✅ MeNotes berhasil aktif dan sehat di port $PORT_VAL!"
+            echo "===================================================="
+          else
+            echo "❌ MeNotes gagal merespons health check! Log container:"
+            $DOCKER_COMPOSE_CMD logs --tail=50
+            exit 1
+          fi
+
+      - name: Clean Up Unused Docker Images
+        if: always()
+        run: |
+          echo "🧹 [5/5] Membersihkan image Docker lama yang tidak terpakai..."
+          docker image prune -f
+
