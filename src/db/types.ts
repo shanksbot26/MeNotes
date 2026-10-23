@@ -6,6 +6,7 @@ export interface Note {
   updatedAt: number;
   isPinned: boolean;
   isLocked?: boolean;
+  pinHash?: string;
   color?: string;
   tags?: string[];
   deletedAt?: number | null;
@@ -19,6 +20,7 @@ export type CreateNoteInput = {
   tags?: string[];
   isPinned?: boolean;
   isLocked?: boolean;
+  pinHash?: string;
 };
 
 export type UpdateNoteInput = Partial<Omit<Note, 'id' | 'createdAt'>>;

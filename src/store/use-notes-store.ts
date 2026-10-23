@@ -1,11 +1,15 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { Note, CreateNoteInput, UpdateNoteInput, ThemeMode } from '@/db/types';
 import { generateId } from '@/utils/id';
-
-let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+import { hashPin } from '@/utils/crypto';
+import {
+  fetchOnlineNotes,
+  createOnlineNote,
+  updateOnlineNote,
+  deleteOnlineNote,
+  formatServerUrl,
+} from '@/utils/sync';
 
 export function getEffectiveServerUrl(customUrl?: string): string {
   const trimmed = (customUrl || '').trim();
@@ -22,354 +26,240 @@ export function getEffectiveSyncToken(customToken?: string): string {
   return 'akuiki26';
 }
 
-function scheduleSyncDebounced(get: () => NotesState) {
-  const state = get();
-  const effectiveUrl = getEffectiveServerUrl(state.serverUrl);
-  if (!effectiveUrl || !state.autoSync) return;
-
-  if (syncDebounceTimer) {
-    clearTimeout(syncDebounceTimer);
-  }
-
-  syncDebounceTimer = setTimeout(async () => {
-    try {
-      const currentState = get();
-      const currentUrl = getEffectiveServerUrl(currentState.serverUrl);
-      if (!currentUrl || !currentState.autoSync) return;
-
-      const { syncNotesWithServer } = await import('@/utils/sync');
-      const deletionsToSync = [...currentState.pendingDeletions];
-
-      const result = await syncNotesWithServer({
-        serverUrl: currentUrl,
-        token: getEffectiveSyncToken(currentState.syncToken),
-        localNotes: currentState.notes,
-        deletedNotes: deletionsToSync,
-        lastSyncTimestamp: currentState.lastSyncTimestamp || 0,
-      });
-
-      if (result.success) {
-        currentState.mergeServerNotes(result.serverNotes as any);
-        currentState.clearPendingDeletions(deletionsToSync.map((d) => d.id));
-        currentState.setSyncStatus(false, result.syncTimestamp);
-      }
-    } catch (err) {
-      console.warn('Auto-sync notice:', err);
-    }
-  }, 400);
-}
+let updateDebounceTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 
 interface NotesState {
+  // 100% In-Memory Cloud State (NOT stored in device AsyncStorage)
   notes: Note[];
-  pendingDeletions: { id: string; deletedAt: number }[];
+  isLoading: boolean;
   searchQuery: string;
   themeMode: ThemeMode;
-  isHydrated: boolean;
-  // In-memory cache for decrypted content during active session (not stored to disk)
   sessionUnlockedContent: Record<string, string>;
 
-  // Self-hosted Server Sync Configuration
+  // Server credentials
   serverUrl: string;
   syncToken: string;
-  autoSync: boolean;
   lastSyncTimestamp: number | null;
-  isSyncing: boolean;
 
   setSearchQuery: (query: string) => void;
   setThemeMode: (mode: ThemeMode) => void;
-  setHydrated: (state: boolean) => void;
-
   setSessionUnlockedContent: (id: string, content: string) => void;
   clearSessionUnlockedContent: (id: string) => void;
 
-  setServerConfig: (url: string, token: string, autoSync?: boolean) => void;
-  setSyncStatus: (isSyncing: boolean, timestamp?: number) => void;
-  clearPendingDeletions: (syncedIds: string[]) => void;
-  mergeServerNotes: (serverNotes: (Note & { deletedAt?: number })[]) => void;
-  triggerSync: () => Promise<void>;
-
+  // Online Server Operations
+  fetchNotes: () => Promise<void>;
   addNote: (input: CreateNoteInput) => Note;
   updateNote: (id: string, updates: UpdateNoteInput) => void;
   deleteNote: (id: string) => void;
   togglePin: (id: string) => void;
-  lockNote: (id: string, cipherText: string) => void;
+  lockNote: (id: string, cipherText: string, pin?: string) => void;
   unlockNotePermanently: (id: string, plainText: string) => void;
+
+  // Realtime Server-Sent Events Dispatcher
+  handleRealtimeEvent: (type: string, payload?: any) => void;
 }
 
-const INITIAL_NOTES: Note[] = [
-  {
-    id: 'welcome-note-1',
-    title: '📌 Selamat Datang di MeNotes!',
-    content: 'Ini adalah aplikasi catatan cross-platform (Android, iOS, dan Web) yang cepat dan siap digunakan secara offline.\n\nCoba sematkan (pin), edit, atau kunci catatan rahasia Anda dengan AES-256.',
-    isPinned: true,
-    isLocked: false,
-    createdAt: Date.now() - 3600000,
-    updatedAt: Date.now() - 3600000,
-    tags: ['Info', 'Penting'],
+export const useNotesStore = create<NotesState>((set, get) => ({
+  notes: [],
+  isLoading: true,
+  searchQuery: '',
+  themeMode: 'system',
+  sessionUnlockedContent: {},
+
+  serverUrl: '',
+  syncToken: 'akuiki26',
+  lastSyncTimestamp: null,
+
+  setSearchQuery: (query: string) => set({ searchQuery: query }),
+  setThemeMode: (mode: ThemeMode) => set({ themeMode: mode }),
+
+  setSessionUnlockedContent: (id: string, content: string) => {
+    set((state) => ({
+      sessionUnlockedContent: {
+        ...state.sessionUnlockedContent,
+        [id]: content,
+      },
+    }));
   },
-  {
-    id: 'welcome-note-2',
-    title: '💡 Fitur Utama MeNotes',
-    content: '- Desain modern dengan Tailwind CSS (NativeWind)\n- Rich Text Editor Tiptap (Heading, Checklist, Tabel)\n- Kunci catatan per-item dengan enkripsi AES-256 dan Biometrik\n- Sinkronisasi mandiri ke server pribadi Anda (Self-Hosted)',
-    isPinned: false,
-    isLocked: false,
-    createdAt: Date.now() - 1800000,
-    updatedAt: Date.now() - 1800000,
-    tags: ['Fitur'],
+
+  clearSessionUnlockedContent: (id: string) => {
+    set((state) => {
+      const updated = { ...state.sessionUnlockedContent };
+      delete updated[id];
+      return { sessionUnlockedContent: updated };
+    });
   },
-];
 
-export const useNotesStore = create<NotesState>()(
-  persist(
-    (set, get) => ({
-      notes: INITIAL_NOTES,
-      pendingDeletions: [],
-      searchQuery: '',
-      themeMode: 'system',
-      isHydrated: false,
-      sessionUnlockedContent: {},
-
-      serverUrl: '',
-      syncToken: 'akuiki26',
-      autoSync: true,
-      lastSyncTimestamp: null,
-      isSyncing: false,
-
-      setSearchQuery: (query: string) => set({ searchQuery: query }),
-
-      setThemeMode: (mode: ThemeMode) => set({ themeMode: mode }),
-
-      setHydrated: (state: boolean) => set({ isHydrated: state }),
-
-      setSessionUnlockedContent: (id: string, content: string) => {
-        set((state) => ({
-          sessionUnlockedContent: {
-            ...state.sessionUnlockedContent,
-            [id]: content,
-          },
-        }));
-      },
-
-      clearSessionUnlockedContent: (id: string) => {
-        set((state) => {
-          const updated = { ...state.sessionUnlockedContent };
-          delete updated[id];
-          return { sessionUnlockedContent: updated };
-        });
-      },
-
-      setServerConfig: (url: string, token: string, autoSync = true) => {
-        set({ serverUrl: url.trim(), syncToken: token.trim(), autoSync });
-      },
-
-      setSyncStatus: (isSyncing: boolean, timestamp?: number) => {
-        set((state) => ({
-          isSyncing,
-          lastSyncTimestamp: timestamp !== undefined ? timestamp : state.lastSyncTimestamp,
-        }));
-      },
-
-      clearPendingDeletions: (syncedIds: string[]) => {
-        set((state) => ({
-          pendingDeletions: state.pendingDeletions.filter((d) => !syncedIds.includes(d.id)),
-        }));
-      },
-
-      triggerSync: async () => {
-        const state = get();
-        const effectiveUrl = getEffectiveServerUrl(state.serverUrl);
-        if (!effectiveUrl) return;
-
-        state.setSyncStatus(true);
-        try {
-          const { syncNotesWithServer } = await import('@/utils/sync');
-          const deletionsToSync = [...state.pendingDeletions];
-
-          const result = await syncNotesWithServer({
-            serverUrl: effectiveUrl,
-            token: getEffectiveSyncToken(state.syncToken),
-            localNotes: state.notes,
-            deletedNotes: deletionsToSync,
-            lastSyncTimestamp: state.lastSyncTimestamp || 0,
-          });
-
-          if (result.success) {
-            state.mergeServerNotes(result.serverNotes as any);
-            state.clearPendingDeletions(deletionsToSync.map((d) => d.id));
-            state.setSyncStatus(false, result.syncTimestamp);
-          }
-        } catch (err) {
-          state.setSyncStatus(false);
-          throw err;
-        }
-      },
-
-      mergeServerNotes: (serverNotes) => {
-        set((state) => {
-          let updatedNotes = [...state.notes];
-
-          for (const sNote of serverNotes) {
-            // Check for deletion tombstone
-            if (sNote.deletedAt) {
-              updatedNotes = updatedNotes.filter((n) => n.id !== sNote.id);
-              continue;
-            }
-
-            const localIndex = updatedNotes.findIndex((n) => n.id === sNote.id);
-
-            if (localIndex === -1) {
-              // Add note received from server
-              updatedNotes.unshift({
-                id: sNote.id,
-                title: sNote.title,
-                content: sNote.content,
-                createdAt: sNote.createdAt,
-                updatedAt: sNote.updatedAt,
-                isPinned: Boolean(sNote.isPinned),
-                isLocked: Boolean(sNote.isLocked),
-                color: sNote.color,
-                tags: sNote.tags || [],
-              });
-            } else {
-              // Apply Last-Write-Wins (LWW)
-              const localNote = updatedNotes[localIndex];
-              if (sNote.updatedAt > localNote.updatedAt) {
-                updatedNotes[localIndex] = {
-                  ...localNote,
-                  title: sNote.title,
-                  content: sNote.content,
-                  updatedAt: sNote.updatedAt,
-                  isPinned: Boolean(sNote.isPinned),
-                  isLocked: Boolean(sNote.isLocked),
-                  color: sNote.color,
-                  tags: sNote.tags || [],
-                };
-              }
-            }
-          }
-
-          // Sort by isPinned and updatedAt
-          updatedNotes.sort((a, b) => {
-            if (a.isPinned !== b.isPinned) {
-              return a.isPinned ? -1 : 1;
-            }
-            return b.updatedAt - a.updatedAt;
-          });
-
-          return { notes: updatedNotes };
-        });
-      },
-
-      addNote: (input: CreateNoteInput) => {
-        const now = Date.now();
-        const newNote: Note = {
-          id: input.id || generateId(),
-          title: input.title.trim(),
-          content: input.content.trim(),
-          color: input.color,
-          tags: input.tags || [],
-          isPinned: input.isPinned ?? false,
-          isLocked: input.isLocked ?? false,
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        set((state) => ({
-          notes: [newNote, ...state.notes],
-        }));
-
-        scheduleSyncDebounced(get);
-        return newNote;
-      },
-
-      updateNote: (id: string, updates: UpdateNoteInput) => {
-        set((state) => ({
-          notes: state.notes.map((note) =>
-            note.id === id
-              ? { ...note, ...updates, updatedAt: Date.now() }
-              : note
-          ),
-        }));
-
-        scheduleSyncDebounced(get);
-      },
-
-      deleteNote: (id: string) => {
-        const now = Date.now();
-        set((state) => {
-          const updatedSession = { ...state.sessionUnlockedContent };
-          delete updatedSession[id];
-          return {
-            notes: state.notes.filter((note) => note.id !== id),
-            sessionUnlockedContent: updatedSession,
-            pendingDeletions: [
-              ...state.pendingDeletions.filter((d) => d.id !== id),
-              { id, deletedAt: now },
-            ],
-          };
-        });
-
-        scheduleSyncDebounced(get);
-      },
-
-      togglePin: (id: string) => {
-        set((state) => ({
-          notes: state.notes.map((note) =>
-            note.id === id
-              ? { ...note, isPinned: !note.isPinned, updatedAt: Date.now() }
-              : note
-          ),
-        }));
-
-        scheduleSyncDebounced(get);
-      },
-
-      lockNote: (id: string, cipherText: string) => {
-        set((state) => ({
-          notes: state.notes.map((note) =>
-            note.id === id
-              ? { ...note, content: cipherText, isLocked: true, updatedAt: Date.now() }
-              : note
-          ),
-        }));
-
-        scheduleSyncDebounced(get);
-      },
-
-      unlockNotePermanently: (id: string, plainText: string) => {
-        set((state) => {
-          const updatedSession = { ...state.sessionUnlockedContent };
-          delete updatedSession[id];
-          return {
-            notes: state.notes.map((note) =>
-              note.id === id
-                ? { ...note, content: plainText, isLocked: false, updatedAt: Date.now() }
-                : note
-            ),
-            sessionUnlockedContent: updatedSession,
-          };
-        });
-
-        scheduleSyncDebounced(get);
-      },
-    }),
-    {
-      name: '@menotes_store',
-      storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({
-        // Persist notes and settings, exclude session keys and temporary loading
-        notes: state.notes,
-        pendingDeletions: state.pendingDeletions,
-        searchQuery: state.searchQuery,
-        themeMode: state.themeMode,
-        serverUrl: state.serverUrl,
-        syncToken: state.syncToken,
-        autoSync: state.autoSync,
-        lastSyncTimestamp: state.lastSyncTimestamp,
-      }),
-      onRehydrateStorage: () => (state) => {
-        state?.setHydrated(true);
-      },
+  fetchNotes: async () => {
+    const state = get();
+    const url = getEffectiveServerUrl(state.serverUrl);
+    if (!url) {
+      set({ isLoading: false });
+      return;
     }
-  )
-);
+
+    try {
+      set({ isLoading: true });
+      const onlineNotes = await fetchOnlineNotes(url, state.syncToken);
+      set({
+        notes: onlineNotes,
+        isLoading: false,
+        lastSyncTimestamp: Date.now(),
+      });
+    } catch (err) {
+      console.warn('Failed to fetch online notes:', err);
+      set({ isLoading: false });
+    }
+  },
+
+  addNote: (input: CreateNoteInput) => {
+    const now = Date.now();
+    const state = get();
+    const url = getEffectiveServerUrl(state.serverUrl);
+
+    const newNote: Note = {
+      id: input.id || generateId(),
+      title: input.title.trim() || 'Tanpa Judul',
+      content: input.content || '',
+      color: input.color,
+      tags: input.tags || [],
+      isPinned: Boolean(input.isPinned),
+      isLocked: Boolean(input.isLocked),
+      pinHash: input.pinHash,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    // 1. Optimistically display in memory
+    set((s) => ({
+      notes: [newNote, ...s.notes.filter((n) => n.id !== newNote.id)],
+    }));
+
+    // 2. Send immediately to server
+    if (url) {
+      createOnlineNote(newNote, url, state.syncToken).catch((err) => {
+        console.warn('Failed to save note to server:', err);
+      });
+    }
+
+    return newNote;
+  },
+
+  updateNote: (id: string, updates: UpdateNoteInput) => {
+    const now = Date.now();
+    const state = get();
+    const url = getEffectiveServerUrl(state.serverUrl);
+
+    // 1. Optimistic update in memory
+    set((s) => ({
+      notes: s.notes.map((note) =>
+        note.id === id ? { ...note, ...updates, updatedAt: now } : note
+      ),
+    }));
+
+    // 2. Debounce push to server to avoid network flood while typing
+    if (updateDebounceTimers[id]) {
+      clearTimeout(updateDebounceTimers[id]);
+    }
+
+    updateDebounceTimers[id] = setTimeout(() => {
+      delete updateDebounceTimers[id];
+      if (url) {
+        updateOnlineNote(id, updates, url, state.syncToken).catch((err) => {
+          console.warn('Failed to update note on server:', err);
+        });
+      }
+    }, 250);
+  },
+
+  deleteNote: (id: string) => {
+    const state = get();
+    const url = getEffectiveServerUrl(state.serverUrl);
+
+    // 1. Optimistic delete in memory
+    set((s) => {
+      const updatedSession = { ...s.sessionUnlockedContent };
+      delete updatedSession[id];
+      return {
+        notes: s.notes.filter((n) => n.id !== id),
+        sessionUnlockedContent: updatedSession,
+      };
+    });
+
+    // 2. Immediately delete on server
+    if (url) {
+      deleteOnlineNote(id, url, state.syncToken).catch((err) => {
+        console.warn('Failed to delete note on server:', err);
+      });
+    }
+  },
+
+  togglePin: (id: string) => {
+    const state = get();
+    const target = state.notes.find((n) => n.id === id);
+    if (!target) return;
+
+    const nextPinned = !target.isPinned;
+    get().updateNote(id, { isPinned: nextPinned });
+  },
+
+  lockNote: (id: string, cipherText: string, pin?: string) => {
+    const pinHashValue = pin ? hashPin(pin) : undefined;
+    get().updateNote(id, {
+      content: cipherText,
+      isLocked: true,
+      pinHash: pinHashValue,
+    });
+  },
+
+  unlockNotePermanently: (id: string, plainText: string) => {
+    get().updateNote(id, {
+      content: plainText,
+      isLocked: false,
+      pinHash: undefined,
+    });
+  },
+
+  handleRealtimeEvent: (type: string, payload?: any) => {
+    if (!payload) return;
+
+    if (type === 'note_created' && payload.note) {
+      const newNote = payload.note as Note;
+      set((s) => {
+        if (s.notes.some((n) => n.id === newNote.id)) {
+          return s; // already present
+        }
+        const updated = [newNote, ...s.notes];
+        updated.sort((a, b) => {
+          if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+          return b.updatedAt - a.updatedAt;
+        });
+        return { notes: updated, lastSyncTimestamp: Date.now() };
+      });
+    } else if (type === 'note_updated' && payload.note) {
+      const updatedNote = payload.note as Note;
+      set((s) => {
+        const index = s.notes.findIndex((n) => n.id === updatedNote.id);
+        let updated: Note[];
+        if (index === -1) {
+          updated = [updatedNote, ...s.notes];
+        } else {
+          updated = s.notes.map((n) => (n.id === updatedNote.id ? updatedNote : n));
+        }
+        updated.sort((a, b) => {
+          if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+          return b.updatedAt - a.updatedAt;
+        });
+        return { notes: updated, lastSyncTimestamp: Date.now() };
+      });
+    } else if (type === 'note_deleted' && payload.id) {
+      const deletedId = payload.id as string;
+      set((s) => ({
+        notes: s.notes.filter((n) => n.id !== deletedId),
+        lastSyncTimestamp: Date.now(),
+      }));
+    } else if (type === 'notes_updated') {
+      get().fetchNotes();
+    }
+  },
+}));

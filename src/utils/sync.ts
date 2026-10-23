@@ -18,10 +18,15 @@ export interface ConnectionTestResult {
   };
 }
 
+export interface DeletedNoteRecord {
+  id: string;
+  deletedAt: number;
+}
+
 /**
  * Format and sanitize the user-provided server URL.
  */
-export function formatServerUrl(rawUrl: string): string {
+export function formatServerUrl(rawUrl?: string): string {
   let url = (rawUrl || '').trim();
 
   // If empty on Web, default to current origin (ideal for self-hosted container)
@@ -42,6 +47,143 @@ export function formatServerUrl(rawUrl: string): string {
   return url;
 }
 
+function getHeaders(token?: string) {
+  const effectiveToken = (token && token.trim()) || 'akuiki26';
+  return {
+    'Content-Type': 'application/json',
+    'x-sync-secret': effectiveToken,
+  };
+}
+
+/**
+ * Fetch all active notes directly from the online server.
+ */
+export async function fetchOnlineNotes(serverUrl?: string, token?: string): Promise<Note[]> {
+  const url = formatServerUrl(serverUrl);
+  if (!url) return [];
+
+  const response = await fetch(`${url}/api/notes`, {
+    method: 'GET',
+    headers: getHeaders(token),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gagal mengambil catatan dari server (${response.status})`);
+  }
+
+  const data = await response.json();
+  return (data.notes || []) as Note[];
+}
+
+/**
+ * Create a new note directly on the online server.
+ */
+export async function createOnlineNote(
+  noteData: Partial<Note>,
+  serverUrl?: string,
+  token?: string
+): Promise<Note> {
+  const url = formatServerUrl(serverUrl);
+  if (!url) throw new Error('Server URL tidak tersedia');
+
+  const response = await fetch(`${url}/api/notes`, {
+    method: 'POST',
+    headers: getHeaders(token),
+    body: JSON.stringify(noteData),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gagal membuat catatan di server (${response.status})`);
+  }
+
+  return (await response.json()) as Note;
+}
+
+/**
+ * Update an existing note directly on the online server.
+ */
+export async function updateOnlineNote(
+  id: string,
+  updates: Partial<Note>,
+  serverUrl?: string,
+  token?: string
+): Promise<Note> {
+  const url = formatServerUrl(serverUrl);
+  if (!url) throw new Error('Server URL tidak tersedia');
+
+  const response = await fetch(`${url}/api/notes/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: getHeaders(token),
+    body: JSON.stringify(updates),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gagal memperbarui catatan di server (${response.status})`);
+  }
+
+  return (await response.json()) as Note;
+}
+
+/**
+ * Delete a note directly on the online server.
+ */
+export async function deleteOnlineNote(
+  id: string,
+  serverUrl?: string,
+  token?: string
+): Promise<void> {
+  const url = formatServerUrl(serverUrl);
+  if (!url) return;
+
+  const response = await fetch(`${url}/api/notes/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: getHeaders(token),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gagal menghapus catatan di server (${response.status})`);
+  }
+}
+
+/**
+ * Listen for live real-time events from server (Server-Sent Events)
+ */
+export function listenRealtimeSyncEvents(
+  serverUrl: string | undefined,
+  token: string | undefined,
+  onEvent: (type: string, payload?: any) => void
+): () => void {
+  const url = formatServerUrl(serverUrl);
+  if (!url || typeof EventSource === 'undefined') {
+    return () => {};
+  }
+
+  try {
+    const sseUrl = new URL(`${url}/api/events`);
+    const effectiveToken = (token && token.trim()) || 'akuiki26';
+    sseUrl.searchParams.set('secret', effectiveToken);
+
+    const es = new EventSource(sseUrl.toString());
+
+    es.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type) {
+          onEvent(payload.type, payload);
+        }
+      } catch (e) {
+        // Ignore parse error
+      }
+    };
+
+    return () => {
+      es.close();
+    };
+  } catch (e) {
+    return () => {};
+  }
+}
+
 /**
  * Test connectivity with the self-hosted MeNotes backend.
  */
@@ -58,16 +200,9 @@ export async function testServerConnection(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (token && token.trim()) {
-      headers['x-sync-secret'] = token.trim();
-    }
-
     const response = await fetch(`${url}/api/health`, {
       method: 'GET',
-      headers,
+      headers: getHeaders(token),
       signal: controller.signal,
     });
 
@@ -102,131 +237,7 @@ export async function testServerConnection(
     }
     return {
       success: false,
-      message: err.message || 'Gagal terhubung ke server. Pastikan server aktif dan port terbuka.',
+      message: err.message || 'Gagal terhubung ke server.',
     };
   }
 }
-
-export interface DeletedNoteRecord {
-  id: string;
-  deletedAt: number;
-}
-
-/**
- * Execute two-way synchronization between client and self-hosted server.
- */
-export async function syncNotesWithServer({
-  serverUrl,
-  token,
-  localNotes,
-  deletedNotes = [],
-  lastSyncTimestamp = 0,
-}: {
-  serverUrl: string;
-  token?: string;
-  localNotes: Note[];
-  deletedNotes?: DeletedNoteRecord[];
-  lastSyncTimestamp?: number;
-}): Promise<SyncResult> {
-  const url = formatServerUrl(serverUrl);
-  if (!url) {
-    throw new Error('URL Server belum dikonfigurasi di menu Pengaturan.');
-  }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-  const effectiveToken = (token && token.trim()) || 'akuiki26';
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'x-sync-secret': effectiveToken,
-  };
-
-  try {
-    // Combine active local notes and deleted tombstones
-    const clientNotesPayload = [
-      ...localNotes,
-      ...deletedNotes.map((d) => ({
-        id: d.id,
-        title: 'Deleted',
-        content: '',
-        createdAt: d.deletedAt,
-        updatedAt: d.deletedAt,
-        isPinned: false,
-        isLocked: false,
-        deletedAt: d.deletedAt,
-      })),
-    ];
-
-    const response = await fetch(`${url}/api/sync`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        clientNotes: clientNotesPayload,
-        lastSyncTimestamp,
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errorJson = await response.json().catch(() => null);
-      const errMsg = errorJson?.message || `Server merespon dengan status ${response.status}`;
-      throw new Error(errMsg);
-    }
-
-    const data = await response.json();
-
-    return {
-      success: true,
-      serverNotes: data.serverNotes || [],
-      syncTimestamp: data.syncTimestamp || Date.now(),
-      message: 'Sinkronisasi berhasil.',
-    };
-  } catch (err: any) {
-    if (err.name === 'AbortError') {
-      throw new Error('Sinkronisasi waktu habis (Timeout 15s).');
-    }
-    throw err;
-  }
-}
-
-/**
- * Listen for live real-time sync events from server (Server-Sent Events)
- */
-export function listenRealtimeSyncEvents(
-  serverUrl: string,
-  token: string | undefined,
-  onUpdate: () => void
-): () => void {
-  const url = formatServerUrl(serverUrl);
-  if (!url || typeof EventSource === 'undefined') {
-    return () => {};
-  }
-
-  try {
-    const sseUrl = new URL(`${url}/api/events`);
-    const effectiveToken = (token && token.trim()) || 'akuiki26';
-    sseUrl.searchParams.set('secret', effectiveToken);
-
-    const es = new EventSource(sseUrl.toString());
-    es.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.type === 'notes_updated') {
-          onUpdate();
-        }
-      } catch (e) {
-        // Ignore parse errors
-      }
-    };
-
-    return () => {
-      es.close();
-    };
-  } catch (e) {
-    return () => {};
-  }
-}
-

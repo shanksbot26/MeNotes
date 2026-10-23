@@ -20,7 +20,7 @@ interface LockModalProps {
   noteTitle: string;
   currentContent: string;
   onClose: () => void;
-  onLockSuccess: (cipherText: string) => void;
+  onLockSuccess: (cipherText: string, pin: string) => void;
 }
 
 export function LockModal({
@@ -76,7 +76,7 @@ export function LockModal({
         await saveBiometricPin(noteId, pin.trim());
       }
 
-      onLockSuccess(cipherText);
+      onLockSuccess(cipherText, pin.trim());
       onClose();
     } catch (err: any) {
       setErrorMessage(err.message || 'Gagal mengenkripsi catatan.');

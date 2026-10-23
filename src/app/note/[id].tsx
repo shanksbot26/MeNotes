@@ -127,6 +127,7 @@ export default function NoteEditorScreen() {
 
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving'>('saved');
   const [showLockModal, setShowLockModal] = useState<boolean>(false);
+  const [showDeleteUnlockModal, setShowDeleteUnlockModal] = useState<boolean>(false);
   const isCreatedInStoreRef = useRef<boolean>(!!existingNote);
   const activePinRef = useRef<string | null>(null);
 
@@ -232,8 +233,9 @@ export default function NoteEditorScreen() {
     }
   };
 
-  const handleLockSuccess = (cipherText: string) => {
+  const handleLockSuccess = (cipherText: string, pin: string) => {
     setIsLocked(true);
+    activePinRef.current = pin;
     if (!isCreatedInStoreRef.current) {
       addNote({
         id: currentId,
@@ -243,9 +245,8 @@ export default function NoteEditorScreen() {
         isLocked: true,
       });
       isCreatedInStoreRef.current = true;
-    } else {
-      lockNoteInStore(currentId, cipherText);
     }
+    lockNoteInStore(currentId, cipherText, pin);
     setSessionUnlockedContent(currentId, content);
   };
 
@@ -257,6 +258,12 @@ export default function NoteEditorScreen() {
   };
 
   const handleDelete = () => {
+    // Jika catatan terkunci dan belum diverifikasi PIN di sesi ini, wajib verifikasi PIN!
+    if (isLocked && !activePinRef.current && existingNote) {
+      setShowDeleteUnlockModal(true);
+      return;
+    }
+
     const executeDelete = () => {
       deleteNote(currentId);
       removeBiometricPin(currentId);
@@ -448,6 +455,23 @@ export default function NoteEditorScreen() {
         onClose={() => setShowLockModal(false)}
         onLockSuccess={handleLockSuccess}
       />
+
+      {/* Unlock Modal for Deleting Locked Note */}
+      {showDeleteUnlockModal && existingNote && (
+        <UnlockModal
+          visible={showDeleteUnlockModal}
+          noteId={currentId}
+          noteTitle={`Hapus: ${title || 'Catatan Terkunci'}`}
+          cipherText={existingNote.content}
+          onClose={() => setShowDeleteUnlockModal(false)}
+          onUnlockSuccess={() => {
+            setShowDeleteUnlockModal(false);
+            deleteNote(currentId);
+            removeBiometricPin(currentId);
+            router.back();
+          }}
+        />
+      )}
     </SafeAreaView>
   );
 }

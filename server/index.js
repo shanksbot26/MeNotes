@@ -3,7 +3,14 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const { syncNotes, getAllActiveNotes } = require('./db');
+const {
+  createNote,
+  updateNote,
+  deleteNote,
+  getNote,
+  getAllActiveNotes,
+  syncNotes,
+} = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -86,6 +93,65 @@ app.get('/api/notes', authMiddleware, (req, res) => {
   } catch (err) {
     console.error('Error fetching notes:', err);
     res.status(500).json({ error: 'Internal server error', details: err.message });
+  }
+});
+
+// Get single note by ID
+app.get('/api/notes/:id', authMiddleware, (req, res) => {
+  try {
+    const note = getNote(req.params.id);
+    if (!note) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+    res.json(note);
+  } catch (err) {
+    console.error('Error fetching note:', err);
+    res.status(500).json({ error: 'Internal server error', details: err.message });
+  }
+});
+
+// Create a new note online
+app.post('/api/notes', authMiddleware, (req, res) => {
+  try {
+    const note = createNote(req.body);
+
+    // Broadcast instant update to all other connected devices!
+    broadcastEvent('note_created', { note });
+
+    res.status(201).json(note);
+  } catch (err) {
+    console.error('Error creating note:', err);
+    res.status(500).json({ error: 'Failed to create note', details: err.message });
+  }
+});
+
+// Update an existing note online
+app.put('/api/notes/:id', authMiddleware, (req, res) => {
+  try {
+    const note = updateNote(req.params.id, req.body);
+
+    // Broadcast instant update to all other connected devices!
+    broadcastEvent('note_updated', { note });
+
+    res.json(note);
+  } catch (err) {
+    console.error('Error updating note:', err);
+    res.status(500).json({ error: 'Failed to update note', details: err.message });
+  }
+});
+
+// Delete a note online
+app.delete('/api/notes/:id', authMiddleware, (req, res) => {
+  try {
+    const result = deleteNote(req.params.id);
+
+    // Broadcast instant deletion to all other connected devices!
+    broadcastEvent('note_deleted', { id: req.params.id });
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('Error deleting note:', err);
+    res.status(500).json({ error: 'Failed to delete note', details: err.message });
   }
 });
 

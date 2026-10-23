@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, Platform, Alert } from 'react-native';
+import { View, Text, ScrollView, Platform, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Header } from '@/components/Header';
@@ -17,6 +17,7 @@ export default function HomeScreen() {
   const router = useRouter();
 
   const notes = useNotesStore((state) => state.notes);
+  const isLoading = useNotesStore((state) => state.isLoading);
   const searchQuery = useNotesStore((state) => state.searchQuery);
   const setSearchQuery = useNotesStore((state) => state.setSearchQuery);
   const deleteNote = useNotesStore((state) => state.deleteNote);
@@ -26,38 +27,32 @@ export default function HomeScreen() {
 
   const serverUrl = useNotesStore((state) => state.serverUrl);
   const syncToken = useNotesStore((state) => state.syncToken);
-  const autoSync = useNotesStore((state) => state.autoSync);
-  const triggerSync = useNotesStore((state) => state.triggerSync);
+  const fetchNotes = useNotesStore((state) => state.fetchNotes);
+  const handleRealtimeEvent = useNotesStore((state) => state.handleRealtimeEvent);
 
   const [unlockTarget, setUnlockTarget] = useState<Note | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Note | null>(null);
 
-  // Background Live Sync & SSE Listener for Realtime Multi-Device Sync
+  // Initial Fetch & Realtime SSE Listener (Zero-latency instant updates across all devices!)
   useEffect(() => {
+    // 1. Initial fetch from online server
+    fetchNotes().catch(() => {});
+
     const effectiveUrl = getEffectiveServerUrl(serverUrl);
-    if (!effectiveUrl || !autoSync) return;
 
-    // 1. Initial sync
-    triggerSync().catch(() => {});
-
-    // 2. Instant Realtime SSE (Server-Sent Events) listener
-    const cleanupSse = listenRealtimeSyncEvents(effectiveUrl, syncToken, () => {
-      triggerSync().catch(() => {});
+    // 2. Realtime SSE connection (broadcasts note_created, note_updated, note_deleted directly)
+    const cleanupSse = listenRealtimeSyncEvents(effectiveUrl, syncToken, (type, payload) => {
+      handleRealtimeEvent(type, payload);
     });
 
-    // 3. Fallback Periodic poll every 5 seconds
-    const pollInterval = setInterval(() => {
-      triggerSync().catch(() => {});
-    }, 5000);
-
-    // 4. Sync on window focus / app return
+    // 3. Sync on window focus / app return
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const handleWindowFocus = () => {
-        triggerSync().catch(() => {});
+        fetchNotes().catch(() => {});
       };
       window.addEventListener('focus', handleWindowFocus);
       return () => {
         cleanupSse();
-        clearInterval(pollInterval);
         window.removeEventListener('focus', handleWindowFocus);
       };
     } else {
@@ -66,7 +61,7 @@ export default function HomeScreen() {
         const { AppState } = require('react-native');
         sub = AppState.addEventListener('change', (nextState: string) => {
           if (nextState === 'active') {
-            triggerSync().catch(() => {});
+            fetchNotes().catch(() => {});
           }
         });
       } catch (e) {
@@ -75,17 +70,23 @@ export default function HomeScreen() {
 
       return () => {
         cleanupSse();
-        clearInterval(pollInterval);
         sub?.remove();
       };
     }
-  }, [serverUrl, syncToken, autoSync, triggerSync]);
+  }, [serverUrl, syncToken, fetchNotes, handleRealtimeEvent]);
 
   const handleDeleteNote = useCallback(
     (id: string) => {
       const targetNote = notes.find((n) => n.id === id);
-      const noteTitle = targetNote?.title || 'catatan ini';
+      if (!targetNote) return;
 
+      // JIKA CATATAN TERKUNCI: Wajib verifikasi PIN terlebih dahulu sebelum boleh dihapus!
+      if (targetNote.isLocked) {
+        setDeleteTarget(targetNote);
+        return;
+      }
+
+      const noteTitle = targetNote.title || 'catatan ini';
       const proceed = () => {
         deleteNote(id);
       };
@@ -177,7 +178,14 @@ export default function HomeScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {filteredNotes.length === 0 ? (
+          {isLoading && notes.length === 0 ? (
+            <View className="py-20 items-center justify-center">
+              <ActivityIndicator size="large" color="#10b981" />
+              <Text className="mt-4 text-sm text-slate-400">
+                Memuat catatan dari server...
+              </Text>
+            </View>
+          ) : filteredNotes.length === 0 ? (
             <EmptyState
               isSearch={searchQuery.length > 0}
               onAddNew={handleCreateNewNote}
@@ -254,6 +262,22 @@ export default function HomeScreen() {
             cipherText={unlockTarget.content}
             onClose={() => setUnlockTarget(null)}
             onUnlockSuccess={handleUnlockSuccess}
+          />
+        )}
+
+        {/* Unlock Modal for DELETING Locked Notes (Requires correct PIN!) */}
+        {deleteTarget && (
+          <UnlockModal
+            visible={!!deleteTarget}
+            noteId={deleteTarget.id}
+            noteTitle={`Hapus: ${deleteTarget.title}`}
+            cipherText={deleteTarget.content}
+            onClose={() => setDeleteTarget(null)}
+            onUnlockSuccess={() => {
+              const idToDelete = deleteTarget.id;
+              setDeleteTarget(null);
+              deleteNote(idToDelete);
+            }}
           />
         )}
       </View>

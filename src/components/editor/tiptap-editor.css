@@ -224,26 +224,37 @@
 /* Task / Checklist */
 ul[data-type="taskList"],
 ul[data-type="tasklist" i],
-.tiptap ul[data-type="taskList"] {
+.tiptap ul[data-type="taskList"],
+.tiptap ul.task-list {
   list-style: none !important;
   padding-left: 0 !important;
   margin: 0.6rem 0 !important;
 }
 
+ul[data-type="taskList"] li,
+ul[data-type="tasklist" i] li,
 li[data-type="taskItem"],
 li[data-type="taskitem" i],
-.tiptap li[data-type="taskItem"] {
+li[data-checked],
+li.task-item,
+.tiptap li[data-type="taskItem"],
+.tiptap li[data-checked] {
   display: flex !important;
   flex-direction: row !important;
+  flex-wrap: nowrap !important;
   align-items: flex-start !important;
   gap: 10px !important;
   margin: 4px 0 !important;
   list-style: none !important;
 }
 
+ul[data-type="taskList"] li > label,
+ul[data-type="tasklist" i] li > label,
 li[data-type="taskItem"] > label,
 li[data-type="taskitem" i] > label,
-.tiptap li[data-type="taskItem"] > label {
+li[data-checked] > label,
+li.task-item > label,
+.tiptap li > label {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
@@ -253,11 +264,17 @@ li[data-type="taskitem" i] > label,
   margin-top: 3px !important;
   flex-shrink: 0 !important;
   flex-grow: 0 !important;
+  width: 20px !important;
+  max-width: 24px !important;
 }
 
+ul[data-type="taskList"] li > label input[type="checkbox"],
+ul[data-type="tasklist" i] li > label input[type="checkbox"],
 li[data-type="taskItem"] > label input[type="checkbox"],
 li[data-type="taskitem" i] > label input[type="checkbox"],
-.tiptap li[data-type="taskItem"] > label input[type="checkbox"] {
+li[data-checked] > label input[type="checkbox"],
+li.task-item > label input[type="checkbox"],
+.tiptap li > label input[type="checkbox"] {
   cursor: pointer !important;
   width: 18px !important;
   height: 18px !important;
@@ -267,30 +284,53 @@ li[data-type="taskitem" i] > label input[type="checkbox"],
   vertical-align: middle !important;
 }
 
+ul[data-type="taskList"] li > div,
+ul[data-type="tasklist" i] li > div,
 li[data-type="taskItem"] > div,
 li[data-type="taskitem" i] > div,
+li[data-checked] > div,
+li.task-item > div,
+ul[data-type="taskList"] li > p,
+ul[data-type="tasklist" i] li > p,
 li[data-type="taskItem"] > p,
 li[data-type="taskitem" i] > p,
-.tiptap li[data-type="taskItem"] > div {
+li[data-checked] > p,
+li.task-item > p,
+.tiptap li[data-checked] > div {
+  display: block !important;
   flex: 1 1 auto !important;
   min-width: 0 !important;
+  width: auto !important;
   margin: 0 !important;
   padding: 0 !important;
 }
 
+ul[data-type="taskList"] li > div > p,
+ul[data-type="tasklist" i] li > div > p,
 li[data-type="taskItem"] > div > p,
 li[data-type="taskitem" i] > div > p,
-.tiptap li[data-type="taskItem"] > div > p {
+li[data-checked] > div > p,
+li.task-item > div > p,
+.tiptap li[data-checked] > div > p {
+  display: block !important;
   margin: 0 !important;
   padding: 0 !important;
   line-height: 1.5 !important;
 }
 
+ul[data-type="taskList"] li[data-checked="true"] > div,
+ul[data-type="tasklist" i] li[data-checked="true"] > div,
 li[data-type="taskItem"][data-checked="true"] > div,
 li[data-type="taskitem" i][data-checked="true"] > div,
+li[data-checked="true"] > div,
+li.task-item[data-checked="true"] > div,
+ul[data-type="taskList"] li[data-checked="true"] > p,
+ul[data-type="tasklist" i] li[data-checked="true"] > p,
 li[data-type="taskItem"][data-checked="true"] > p,
 li[data-type="taskitem" i][data-checked="true"] > p,
-.tiptap li[data-type="taskItem"][data-checked="true"] > div {
+li[data-checked="true"] > p,
+li.task-item[data-checked="true"] > p,
+.tiptap li[data-checked="true"] > div {
   text-decoration: line-through !important;
   opacity: 0.55 !important;
 }

@@ -68,3 +68,10 @@ export function isNoteEncrypted(content: string): boolean {
   return content.startsWith('U2FsdGVkX1') || (content.length > 32 && !content.includes('<') && !content.includes(' '));
 }
 
+/**
+ * Hash PIN using SHA-256 for online verification across devices.
+ */
+export function hashPin(pin: string): string {
+  return CryptoJS.SHA256(pin.trim()).toString();
+}
+

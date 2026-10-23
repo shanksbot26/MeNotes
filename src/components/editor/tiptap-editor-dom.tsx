@@ -156,9 +156,18 @@ export default function TiptapEditorDom({
       TextAlign.configure({
         types: ['heading', 'paragraph'],
       }),
-      TaskList,
+      TaskList.configure({
+        HTMLAttributes: {
+          class: 'task-list',
+          'data-type': 'taskList',
+        },
+      }),
       TaskItem.configure({
         nested: true,
+        HTMLAttributes: {
+          class: 'task-item',
+          'data-type': 'taskItem',
+        },
       }),
       Table.configure({
         resizable: false,
@@ -238,6 +247,95 @@ export default function TiptapEditorDom({
         setShowTableColorPicker(false);
       }}
     >
+      <style>{`
+        ul[data-type="taskList"],
+        ul[data-type="tasklist" i],
+        ul.task-list {
+          list-style: none !important;
+          padding-left: 0 !important;
+          margin: 0.6rem 0 !important;
+        }
+        ul[data-type="taskList"] li,
+        ul[data-type="tasklist" i] li,
+        li[data-checked],
+        li.task-item {
+          display: flex !important;
+          flex-direction: row !important;
+          flex-wrap: nowrap !important;
+          align-items: flex-start !important;
+          gap: 10px !important;
+          margin: 4px 0 !important;
+          list-style: none !important;
+        }
+        ul[data-type="taskList"] li > label,
+        li[data-checked] > label,
+        li.task-item > label {
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          cursor: pointer !important;
+          user-select: none !important;
+          margin: 0 !important;
+          margin-top: 3px !important;
+          flex-shrink: 0 !important;
+          flex-grow: 0 !important;
+          width: 20px !important;
+          max-width: 24px !important;
+        }
+        ul[data-type="taskList"] li > label input[type="checkbox"],
+        li[data-checked] > label input[type="checkbox"],
+        li.task-item > label input[type="checkbox"] {
+          cursor: pointer !important;
+          width: 18px !important;
+          height: 18px !important;
+          accent-color: #10b981 !important;
+          border-radius: 4px !important;
+          margin: 0 !important;
+          vertical-align: middle !important;
+        }
+        ul[data-type="taskList"] li > div,
+        li[data-type="taskItem"] > div,
+        li[data-checked] > div,
+        li.task-item > div,
+        ul[data-type="taskList"] li > p,
+        li[data-type="taskItem"] > p,
+        li[data-checked] > p,
+        li.task-item > p {
+          display: block !important;
+          flex: 1 1 auto !important;
+          min-width: 0 !important;
+          width: auto !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+        ul[data-type="taskList"] li > div > p,
+        li[data-type="taskItem"] > div > p,
+        li[data-checked] > div > p,
+        li.task-item > div > p {
+          display: block !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          line-height: 1.5 !important;
+        }
+        ul[data-type="taskList"] li[data-checked="true"] > div,
+        li[data-type="taskItem"][data-checked="true"] > div,
+        li[data-checked="true"] > div,
+        li.task-item[data-checked="true"] > div,
+        ul[data-type="taskList"] li[data-checked="true"] > p,
+        li[data-type="taskItem"][data-checked="true"] > p,
+        li[data-checked="true"] > p,
+        li.task-item[data-checked="true"] > p {
+          text-decoration: line-through !important;
+          opacity: 0.55 !important;
+        }
+        .tiptap td > p,
+        .tiptap th > p {
+          margin: 0 !important;
+          padding: 0 !important;
+          min-height: 1.5em;
+          line-height: 1.5;
+        }
+      `}</style>
       {/* Complete Responsive Toolbar with onMouseDown preventBlur */}
       <div className="tiptap-toolbar" onClick={(e) => e.stopPropagation()}>
         {/* Headings */}
