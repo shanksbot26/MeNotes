@@ -1,0 +1,11 @@
+node_modules
+server/node_modules
+server/data
+data
+dist
+.expo
+.git
+.vscode
+.claude
+*.log
+
