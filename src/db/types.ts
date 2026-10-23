@@ -11,6 +11,7 @@ export interface Note {
 }
 
 export type CreateNoteInput = {
+  id?: string;
   title: string;
   content: string;
   color?: string;

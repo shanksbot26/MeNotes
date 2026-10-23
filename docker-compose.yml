@@ -6,14 +6,12 @@ services:
     container_name: menotes-app
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:3000"
     volumes:
       # Persistent SQLite database storage on host machine
       - ./data:/app/data
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-production}
       - PORT=3000
-      - DATA_DIR=/app/data
-      # Optional: set a secret token for API authentication (e.g. SYNC_SECRET=your_secret_passphrase)
-      - SYNC_SECRET=akuiki26
-
+      - DATA_DIR=${DATA_DIR:-/app/data}
+      - SYNC_SECRET=${SYNC_SECRET:-}

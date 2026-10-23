@@ -1,0 +1,96 @@
+name: CI/CD Pipeline - MeNotes Self-Hosted
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Memungkinkan trigger manual dari tab Actions di GitHub
+
+jobs:
+  # ========================================================
+  # Job 1: Quality Gate & Typecheck (CI)
+  # ========================================================
+  test-and-lint:
+    name: Code Quality & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Client Dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Run TypeScript Typecheck
+        run: npx tsc --noEmit
+
+      - name: Verify Server Dependencies
+        working-directory: ./server
+        run: npm ci
+
+  # ========================================================
+  # Job 2: Continuous Deployment via SSH (CD)
+  # ========================================================
+  deploy-ssh:
+    name: Deploy to Self-Hosted Server (SSH)
+    needs: test-and-lint
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Execute Remote Deployment via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -e
+            echo "🚀 [CI/CD] Deploying MeNotes to Self-Hosted Server..."
+            
+            # Pindah ke direktori MeNotes di server (default: /opt/menotes)
+            TARGET_DIR="${{ secrets.DEPLOY_PATH || '/opt/menotes' }}"
+            if [ ! -d "$TARGET_DIR" ]; then
+              echo "❌ Error: Direktori $TARGET_DIR tidak ditemukan di server!"
+              echo "Pastikan Anda sudah meng-clone repo MeNotes ke $TARGET_DIR terlebih dahulu."
+              exit 1
+            fi
+            
+            cd "$TARGET_DIR"
+
+            echo "📥 [1/4] Menarik perubahan kode terbaru dari branch main..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "🐳 [2/4] Membangun ulang dan menyalakan container Docker..."
+            docker compose up -d --build --remove-orphans
+
+            echo "⏳ [3/4] Menunggu layanan backend aktif..."
+            sleep 6
+
+            echo "🔍 [4/4] Memeriksa status kesehatan aplikasi (/api/health)..."
+            # Deteksi port dari .env jika ada, fallback ke 3000
+            PORT_IN_ENV=$(grep -E '^PORT=' .env 2>/dev/null | cut -d '=' -f2 | tr -d ' ' || true)
+            HOST_PORT="${PORT_IN_ENV:-3000}"
+            
+            HEALTH_URL="http://127.0.0.1:${HOST_PORT}/api/health"
+            echo "Memeriksa: $HEALTH_URL"
+            
+            if curl -fsS "$HEALTH_URL" > /dev/null 2>&1; then
+              echo "✅ Healthcheck sukses! MeNotes berhasil berjalan di port $HOST_PORT."
+            else
+              echo "⚠️ Gagal menghubungi $HEALTH_URL, menampilkan log Docker..."
+              docker compose logs --tail=40
+              exit 1
+            fi
+
+            echo "🧹 Membersihkan image lama yang tidak terpakai..."
+            docker image prune -f
+
+            echo "🎉 MeNotes CI/CD Deployment Selesai dengan Sukses!"

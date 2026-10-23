@@ -4,6 +4,39 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Note, CreateNoteInput, UpdateNoteInput, ThemeMode } from '@/db/types';
 import { generateId } from '@/utils/id';
 
+let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSyncDebounced(get: () => NotesState) {
+  const state = get();
+  if (!state.serverUrl || !state.autoSync) return;
+
+  if (syncDebounceTimer) {
+    clearTimeout(syncDebounceTimer);
+  }
+
+  syncDebounceTimer = setTimeout(async () => {
+    try {
+      const currentState = get();
+      if (!currentState.serverUrl || !currentState.autoSync) return;
+
+      const { syncNotesWithServer } = await import('@/utils/sync');
+      const result = await syncNotesWithServer({
+        serverUrl: currentState.serverUrl,
+        token: currentState.syncToken,
+        localNotes: currentState.notes,
+        lastSyncTimestamp: currentState.lastSyncTimestamp || 0,
+      });
+
+      if (result.success) {
+        currentState.mergeServerNotes(result.serverNotes as any);
+        currentState.setSyncStatus(false, result.syncTimestamp);
+      }
+    } catch (err) {
+      console.warn('Auto-sync notice:', err);
+    }
+  }, 1200);
+}
+
 interface NotesState {
   notes: Note[];
   searchQuery: string;
@@ -29,6 +62,7 @@ interface NotesState {
   setServerConfig: (url: string, token: string, autoSync?: boolean) => void;
   setSyncStatus: (isSyncing: boolean, timestamp?: number) => void;
   mergeServerNotes: (serverNotes: (Note & { deletedAt?: number })[]) => void;
+  triggerSync: () => Promise<void>;
 
   addNote: (input: CreateNoteInput) => Note;
   updateNote: (id: string, updates: UpdateNoteInput) => void;
@@ -110,6 +144,30 @@ export const useNotesStore = create<NotesState>()(
         }));
       },
 
+      triggerSync: async () => {
+        const state = get();
+        if (!state.serverUrl) return;
+
+        state.setSyncStatus(true);
+        try {
+          const { syncNotesWithServer } = await import('@/utils/sync');
+          const result = await syncNotesWithServer({
+            serverUrl: state.serverUrl,
+            token: state.syncToken,
+            localNotes: state.notes,
+            lastSyncTimestamp: state.lastSyncTimestamp || 0,
+          });
+
+          if (result.success) {
+            state.mergeServerNotes(result.serverNotes as any);
+            state.setSyncStatus(false, result.syncTimestamp);
+          }
+        } catch (err) {
+          state.setSyncStatus(false);
+          throw err;
+        }
+      },
+
       mergeServerNotes: (serverNotes) => {
         set((state) => {
           let updatedNotes = [...state.notes];
@@ -169,7 +227,7 @@ export const useNotesStore = create<NotesState>()(
       addNote: (input: CreateNoteInput) => {
         const now = Date.now();
         const newNote: Note = {
-          id: generateId(),
+          id: input.id || generateId(),
           title: input.title.trim(),
           content: input.content.trim(),
           color: input.color,
@@ -184,6 +242,7 @@ export const useNotesStore = create<NotesState>()(
           notes: [newNote, ...state.notes],
         }));
 
+        scheduleSyncDebounced(get);
         return newNote;
       },
 
@@ -195,6 +254,8 @@ export const useNotesStore = create<NotesState>()(
               : note
           ),
         }));
+
+        scheduleSyncDebounced(get);
       },
 
       deleteNote: (id: string) => {
@@ -206,6 +267,8 @@ export const useNotesStore = create<NotesState>()(
             sessionUnlockedContent: updatedSession,
           };
         });
+
+        scheduleSyncDebounced(get);
       },
 
       togglePin: (id: string) => {
@@ -216,6 +279,8 @@ export const useNotesStore = create<NotesState>()(
               : note
           ),
         }));
+
+        scheduleSyncDebounced(get);
       },
 
       lockNote: (id: string, cipherText: string) => {
@@ -226,6 +291,8 @@ export const useNotesStore = create<NotesState>()(
               : note
           ),
         }));
+
+        scheduleSyncDebounced(get);
       },
 
       unlockNotePermanently: (id: string, plainText: string) => {
@@ -241,6 +308,8 @@ export const useNotesStore = create<NotesState>()(
             sessionUnlockedContent: updatedSession,
           };
         });
+
+        scheduleSyncDebounced(get);
       },
     }),
     {

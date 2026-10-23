@@ -35,11 +35,10 @@ import {
   Table as TableIcon,
   Palette,
   Highlighter,
-  PlusSquare,
-  MinusSquare,
   Columns,
   Rows,
   Trash2,
+  PaintBucket,
 } from 'lucide-react';
 
 import './tiptap-editor.css';
@@ -69,6 +68,57 @@ const HIGHLIGHT_COLORS = [
   { label: 'Oranye', value: '#fed7aa' },
 ];
 
+const TABLE_CELL_COLORS = [
+  { label: 'Bening (Default)', value: '' },
+  { label: 'Abu-abu', value: '#f1f5f9', darkValue: '#334155' },
+  { label: 'Hijau Muda', value: '#dcfce7', darkValue: '#064e3b' },
+  { label: 'Biru Muda', value: '#dbeafe', darkValue: '#1e3a8a' },
+  { label: 'Kuning Muda', value: '#fef3c7', darkValue: '#78350f' },
+  { label: 'Merah Muda', value: '#fee2e2', darkValue: '#7f1d1d' },
+  { label: 'Ungu Muda', value: '#f3e8ff', darkValue: '#581c87' },
+];
+
+// Extend TableCell and TableHeader to support backgroundColor attribute
+const CustomTableCell = TableCell.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      backgroundColor: {
+        default: null,
+        parseHTML: (element) => element.style.backgroundColor || null,
+        renderHTML: (attributes) => {
+          if (!attributes.backgroundColor) {
+            return {};
+          }
+          return {
+            style: `background-color: ${attributes.backgroundColor}`,
+          };
+        },
+      },
+    };
+  },
+});
+
+const CustomTableHeader = TableHeader.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      backgroundColor: {
+        default: null,
+        parseHTML: (element) => element.style.backgroundColor || null,
+        renderHTML: (attributes) => {
+          if (!attributes.backgroundColor) {
+            return {};
+          }
+          return {
+            style: `background-color: ${attributes.backgroundColor}`,
+          };
+        },
+      },
+    };
+  },
+});
+
 export default function TiptapEditorDom({
   initialContent = '',
   isDarkMode = false,
@@ -76,6 +126,7 @@ export default function TiptapEditorDom({
 }: TiptapEditorDomProps) {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showHighlightPicker, setShowHighlightPicker] = useState(false);
+  const [showTableColorPicker, setShowTableColorPicker] = useState(false);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleUpdate = useCallback(
@@ -110,8 +161,8 @@ export default function TiptapEditorDom({
         resizable: true,
       }),
       TableRow,
-      TableHeader,
-      TableCell,
+      CustomTableHeader,
+      CustomTableCell,
       Placeholder.configure({
         placeholder: 'Mulai menulis catatan di sini...',
       }),
@@ -154,6 +205,21 @@ export default function TiptapEditorDom({
     );
   }
 
+  // Handle setting table cell color
+  const setCellColor = (color: string) => {
+    if (!color) {
+      (editor.chain().focus() as any).setCellAttribute('backgroundColor', null).run();
+    } else {
+      (editor.chain().focus() as any).setCellAttribute('backgroundColor', color).run();
+    }
+    setShowTableColorPicker(false);
+  };
+
+  // Helper to keep ProseMirror focus when clicking toolbar buttons
+  const preventBlur = (e: React.MouseEvent) => {
+    e.preventDefault();
+  };
+
   const isTableActive = editor.isActive('table');
 
   return (
@@ -162,15 +228,17 @@ export default function TiptapEditorDom({
       onClick={() => {
         setShowColorPicker(false);
         setShowHighlightPicker(false);
+        setShowTableColorPicker(false);
       }}
     >
-      {/* Complete Responsive Toolbar */}
+      {/* Complete Responsive Toolbar with onMouseDown preventBlur */}
       <div className="tiptap-toolbar" onClick={(e) => e.stopPropagation()}>
         {/* Headings */}
         <div className="toolbar-group">
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive('paragraph') ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().setParagraph().run()}
             title="Paragraf"
           >
@@ -179,6 +247,7 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive('heading', { level: 1 }) ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
             title="Heading 1"
           >
@@ -187,6 +256,7 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive('heading', { level: 2 }) ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
             title="Heading 2"
           >
@@ -195,6 +265,7 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive('heading', { level: 3 }) ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
             title="Heading 3"
           >
@@ -207,6 +278,7 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive('bold') ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().toggleBold().run()}
             title="Tebal (Bold)"
           >
@@ -215,6 +287,7 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive('italic') ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().toggleItalic().run()}
             title="Miring (Italic)"
           >
@@ -223,6 +296,7 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive('underline') ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().toggleUnderline().run()}
             title="Garis Bawah (Underline)"
           >
@@ -231,6 +305,7 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive('strike') ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().toggleStrike().run()}
             title="Coret (Strikethrough)"
           >
@@ -243,9 +318,11 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className="toolbar-btn"
+            onMouseDown={preventBlur}
             onClick={() => {
               setShowColorPicker(!showColorPicker);
               setShowHighlightPicker(false);
+              setShowTableColorPicker(false);
             }}
             title="Warna Teks"
           >
@@ -260,6 +337,7 @@ export default function TiptapEditorDom({
                   className="color-swatch"
                   style={{ backgroundColor: c.color }}
                   title={c.label}
+                  onMouseDown={preventBlur}
                   onClick={() => {
                     if (c.value === 'inherit') {
                       editor.chain().focus().unsetColor().run();
@@ -276,9 +354,11 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive('highlight') ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => {
               setShowHighlightPicker(!showHighlightPicker);
               setShowColorPicker(false);
+              setShowTableColorPicker(false);
             }}
             title="Stabilo (Highlight)"
           >
@@ -293,6 +373,7 @@ export default function TiptapEditorDom({
                   className="color-swatch"
                   style={{ backgroundColor: h.value }}
                   title={h.label}
+                  onMouseDown={preventBlur}
                   onClick={() => {
                     editor.chain().focus().toggleHighlight({ color: h.value }).run();
                     setShowHighlightPicker(false);
@@ -303,6 +384,7 @@ export default function TiptapEditorDom({
                 type="button"
                 className="toolbar-btn"
                 style={{ fontSize: 11, padding: '0 4px', height: 20 }}
+                onMouseDown={preventBlur}
                 onClick={() => {
                   editor.chain().focus().unsetHighlight().run();
                   setShowHighlightPicker(false);
@@ -319,6 +401,7 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive({ textAlign: 'left' }) ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().setTextAlign('left').run()}
             title="Rata Kiri"
           >
@@ -327,6 +410,7 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive({ textAlign: 'center' }) ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().setTextAlign('center').run()}
             title="Rata Tengah"
           >
@@ -335,6 +419,7 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive({ textAlign: 'right' }) ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().setTextAlign('right').run()}
             title="Rata Kanan"
           >
@@ -347,6 +432,7 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive('blockquote') ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().toggleBlockquote().run()}
             title="Kutipan (Quote)"
           >
@@ -355,6 +441,7 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive('codeBlock') ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().toggleCodeBlock().run()}
             title="Code Block"
           >
@@ -363,6 +450,7 @@ export default function TiptapEditorDom({
           <button
             type="button"
             className={`toolbar-btn ${editor.isActive('taskList') ? 'is-active' : ''}`}
+            onMouseDown={preventBlur}
             onClick={() => editor.chain().focus().toggleTaskList().run()}
             title="Ceklis Tugas (To-do List)"
           >
@@ -370,78 +458,142 @@ export default function TiptapEditorDom({
           </button>
         </div>
 
-        {/* Tables */}
-        <div className="toolbar-group" style={{ borderRight: 'none' }}>
+        {/* Enhanced Table Tools */}
+        <div className="toolbar-group" style={{ borderRight: 'none', position: 'relative' }}>
           <button
             type="button"
             className={`toolbar-btn ${isTableActive ? 'is-active' : ''}`}
-            onClick={() =>
-              editor
-                .chain()
-                .focus()
-                .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
-                .run()
-            }
-            title="Sisipkan Tabel (3x3)"
+            onMouseDown={preventBlur}
+            onClick={() => {
+              if (!isTableActive) {
+                editor
+                  .chain()
+                  .focus()
+                  .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+                  .run();
+              } else {
+                // Toggle table color popover if already in table
+                setShowTableColorPicker(!showTableColorPicker);
+              }
+            }}
+            title={isTableActive ? 'Opsi Tabel' : 'Sisipkan Tabel (3x3)'}
           >
             <TableIcon size={16} />
           </button>
 
+          {/* Table Cell Color Picker Button */}
+          <button
+            type="button"
+            className="toolbar-btn"
+            onMouseDown={preventBlur}
+            onClick={() => {
+              setShowTableColorPicker(!showTableColorPicker);
+              setShowColorPicker(false);
+              setShowHighlightPicker(false);
+            }}
+            title="Warna Latar Sel Tabel"
+          >
+            <PaintBucket size={15} />
+          </button>
+
+          {showTableColorPicker && (
+            <div className="color-picker-popover" style={{ width: 180, flexWrap: 'wrap' }}>
+              <div style={{ width: '100%', fontSize: 11, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>
+                Warna Sel Tabel:
+              </div>
+              {TABLE_CELL_COLORS.map((tc) => (
+                <button
+                  key={tc.label}
+                  type="button"
+                  className="color-swatch"
+                  style={{
+                    backgroundColor: tc.value || (isDarkMode ? '#0f172a' : '#ffffff'),
+                    border: tc.value ? '1px solid rgba(0,0,0,0.1)' : '1px dashed #94a3b8',
+                  }}
+                  title={tc.label}
+                  onMouseDown={preventBlur}
+                  onClick={() => setCellColor(isDarkMode && tc.darkValue ? tc.darkValue : tc.value)}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Table Rows & Columns Control Buttons */}
+          <button
+            type="button"
+            className="toolbar-btn"
+            onMouseDown={preventBlur}
+            onClick={() => editor.chain().focus().addRowAfter().run()}
+            title="Tambah Baris (+ Baris)"
+          >
+            <Rows size={15} />
+            <span style={{ fontSize: 10, marginLeft: 2, fontWeight: 700 }}>+</span>
+          </button>
+          <button
+            type="button"
+            className="toolbar-btn"
+            onMouseDown={preventBlur}
+            onClick={() => editor.chain().focus().deleteRow().run()}
+            title="Hapus Baris (- Baris)"
+          >
+            <Rows size={15} />
+            <span style={{ fontSize: 10, marginLeft: 2, fontWeight: 700 }}>-</span>
+          </button>
+
+          <button
+            type="button"
+            className="toolbar-btn"
+            onMouseDown={preventBlur}
+            onClick={() => editor.chain().focus().addColumnAfter().run()}
+            title="Tambah Kolom (+ Kolom)"
+          >
+            <Columns size={15} />
+            <span style={{ fontSize: 10, marginLeft: 2, fontWeight: 700 }}>+</span>
+          </button>
+          <button
+            type="button"
+            className="toolbar-btn"
+            onMouseDown={preventBlur}
+            onClick={() => editor.chain().focus().deleteColumn().run()}
+            title="Hapus Kolom (- Kolom)"
+          >
+            <Columns size={15} />
+            <span style={{ fontSize: 10, marginLeft: 2, fontWeight: 700 }}>-</span>
+          </button>
+
           {isTableActive && (
-            <>
-              <button
-                type="button"
-                className="toolbar-btn"
-                onClick={() => editor.chain().focus().addRowAfter().run()}
-                title="Tambah Baris (+ Baris)"
-              >
-                <Rows size={16} />
-                <span style={{ fontSize: 10, marginLeft: 2 }}>+</span>
-              </button>
-              <button
-                type="button"
-                className="toolbar-btn"
-                onClick={() => editor.chain().focus().deleteRow().run()}
-                title="Hapus Baris (- Baris)"
-              >
-                <Rows size={16} />
-                <span style={{ fontSize: 10, marginLeft: 2 }}>-</span>
-              </button>
-              <button
-                type="button"
-                className="toolbar-btn"
-                onClick={() => editor.chain().focus().addColumnAfter().run()}
-                title="Tambah Kolom (+ Kolom)"
-              >
-                <Columns size={16} />
-                <span style={{ fontSize: 10, marginLeft: 2 }}>+</span>
-              </button>
-              <button
-                type="button"
-                className="toolbar-btn"
-                onClick={() => editor.chain().focus().deleteColumn().run()}
-                title="Hapus Kolom (- Kolom)"
-              >
-                <Columns size={16} />
-                <span style={{ fontSize: 10, marginLeft: 2 }}>-</span>
-              </button>
-              <button
-                type="button"
-                className="toolbar-btn"
-                style={{ color: '#ef4444' }}
-                onClick={() => editor.chain().focus().deleteTable().run()}
-                title="Hapus Tabel"
-              >
-                <Trash2 size={16} />
-              </button>
-            </>
+            <button
+              type="button"
+              className="toolbar-btn"
+              style={{ color: '#ef4444' }}
+              onMouseDown={preventBlur}
+              onClick={() => editor.chain().focus().deleteTable().run()}
+              title="Hapus Tabel"
+            >
+              <Trash2 size={15} />
+            </button>
           )}
         </div>
       </div>
 
-      {/* Editor Content Area */}
-      <div className="tiptap-content-container">
-        <EditorContent editor={editor} />
+      {/* Editor Content Area with responsive desktop max-width */}
+      <div
+        className="tiptap-content-container"
+        onClick={(e) => {
+          // If checkbox clicked, ensure editor state is dispatched
+          const target = e.target as HTMLElement;
+          if (target && target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'checkbox') {
+            setTimeout(() => {
+              if (editor) {
+                onContentChange?.(editor.getHTML());
+              }
+            }, 60);
+          }
+        }}
+      >
+        <div className="tiptap-canvas-wrapper">
+          <EditorContent editor={editor} />
+        </div>
       </div>
     </div>
   );

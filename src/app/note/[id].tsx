@@ -49,6 +49,9 @@ export default function NoteEditorScreen() {
   const setSessionUnlockedContent = useNotesStore(
     (state) => state.setSessionUnlockedContent
   );
+  const clearSessionUnlockedContent = useNotesStore(
+    (state) => state.clearSessionUnlockedContent
+  );
 
   const existingNote = notes.find((n) => n.id === id);
 
@@ -106,6 +109,7 @@ export default function NoteEditorScreen() {
 
       if (!isCreatedInStoreRef.current) {
         addNote({
+          id: currentId,
           title: newTitle.trim() || 'Tanpa Judul',
           content: contentToPersist,
           isPinned: pinned,
@@ -192,7 +196,18 @@ export default function NoteEditorScreen() {
 
   const handleLockSuccess = (cipherText: string) => {
     setIsLocked(true);
-    lockNoteInStore(currentId, cipherText);
+    if (!isCreatedInStoreRef.current) {
+      addNote({
+        id: currentId,
+        title: title.trim() || 'Tanpa Judul',
+        content: cipherText,
+        isPinned,
+        isLocked: true,
+      });
+      isCreatedInStoreRef.current = true;
+    } else {
+      lockNoteInStore(currentId, cipherText);
+    }
     setSessionUnlockedContent(currentId, content);
   };
 
@@ -238,6 +253,12 @@ export default function NoteEditorScreen() {
     ) {
       deleteNote(currentId);
     }
+
+    // Always clear session unlocked state when leaving so note is locked on Home Screen
+    if (isLocked) {
+      clearSessionUnlockedContent(currentId);
+    }
+
     router.back();
   };
 
@@ -246,101 +267,101 @@ export default function NoteEditorScreen() {
       edges={['top', 'left', 'right']}
       className="flex-1 bg-white dark:bg-slate-950"
     >
-      {/* Top Header Bar */}
-      <View className="flex-row items-center justify-between px-3 py-2.5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
-        <View className="flex-row items-center gap-2 flex-1">
-          <Pressable
-            onPress={handleBack}
-            hitSlop={8}
-            className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 active:opacity-70"
-            accessibilityLabel="Kembali ke Beranda"
-          >
-            <ArrowLeft size={20} color={isDark ? '#e2e8f0' : '#334155'} />
-          </Pressable>
+      {/* Top Header Bar with responsive PC max-width */}
+      <View className="w-full bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
+        <View className="max-w-4xl mx-auto w-full flex-row items-center justify-between px-3 md:px-6 py-2.5">
+          <View className="flex-row items-center gap-2 flex-1">
+            <Pressable
+              onPress={handleBack}
+              hitSlop={8}
+              className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 active:opacity-70"
+              accessibilityLabel="Kembali ke Beranda"
+            >
+              <ArrowLeft size={20} color={isDark ? '#e2e8f0' : '#334155'} />
+            </Pressable>
 
-          <TextInput
-            value={title}
-            onChangeText={handleTitleChange}
-            placeholder="Judul Catatan..."
-            placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
-            className="flex-1 text-base font-bold text-slate-900 dark:text-white px-2 py-1"
-            style={{ outlineStyle: 'none' } as any}
-          />
-        </View>
-
-        <View className="flex-row items-center gap-1.5 ml-2">
-          {/* Save Status Indicator */}
-          <View className="flex-row items-center gap-1 px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800/80 mr-1">
-            <CheckCircle2
-              size={12}
-              color={saveStatus === 'saved' ? '#10b981' : '#f59e0b'}
+            <TextInput
+              value={title}
+              onChangeText={handleTitleChange}
+              placeholder="Judul Catatan..."
+              placeholderTextColor={isDark ? '#64748b' : '#94a3b8'}
+              className="flex-1 text-base md:text-lg font-bold text-slate-900 dark:text-white px-2 py-1"
+              style={{ outlineStyle: 'none' } as any}
             />
-            <Text className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-              {saveStatus === 'saved' ? 'Tersimpan' : 'Menyimpan...'}
-            </Text>
           </View>
 
-          {/* Lock / Encrypt Button */}
-          <Pressable
-            onPress={handleLockClick}
-            hitSlop={8}
-            className={`p-2 rounded-xl border ${
-              isLocked
-                ? 'bg-amber-100 border-amber-300 dark:bg-amber-950/60 dark:border-amber-700'
-                : 'bg-slate-100 border-slate-200/80 dark:bg-slate-800 dark:border-slate-700/80'
-            }`}
-            accessibilityLabel={isLocked ? 'Catatan Terkunci' : 'Kunci Catatan'}
-          >
-            {isLocked ? (
-              <Lock size={16} color="#d97706" />
-            ) : (
-              <Unlock size={16} color={isDark ? '#94a3b8' : '#64748b'} />
-            )}
-          </Pressable>
+          <View className="flex-row items-center gap-1.5 ml-2">
+            {/* Save Status Indicator */}
+            <View className="flex-row items-center gap-1 px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800/80 mr-1">
+              <CheckCircle2
+                size={12}
+                color={saveStatus === 'saved' ? '#10b981' : '#f59e0b'}
+              />
+              <Text className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                {saveStatus === 'saved' ? 'Tersimpan' : 'Menyimpan...'}
+              </Text>
+            </View>
 
-          {/* Pin Button */}
-          <Pressable
-            onPress={handleTogglePin}
-            hitSlop={8}
-            className={`p-2 rounded-xl border ${
-              isPinned
-                ? 'bg-amber-100 border-amber-300 dark:bg-amber-950/60 dark:border-amber-700'
-                : 'bg-slate-100 border-slate-200/80 dark:bg-slate-800 dark:border-slate-700/80'
-            }`}
-            accessibilityLabel={isPinned ? 'Lepas sematan' : 'Sematkan catatan'}
-          >
-            <Pin
-              size={16}
-              color={
-                isPinned ? '#d97706' : isDark ? '#94a3b8' : '#64748b'
-              }
-              fill={isPinned ? '#d97706' : 'none'}
-            />
-          </Pressable>
+            {/* Lock / Encrypt Button */}
+            <Pressable
+              onPress={handleLockClick}
+              hitSlop={8}
+              className={`p-2 rounded-xl border ${
+                isLocked
+                  ? 'bg-amber-100 border-amber-300 dark:bg-amber-950/60 dark:border-amber-700'
+                  : 'bg-slate-100 border-slate-200/80 dark:bg-slate-800 dark:border-slate-700/80'
+              }`}
+              accessibilityLabel={isLocked ? 'Catatan Terkunci' : 'Kunci Catatan'}
+            >
+              {isLocked ? (
+                <Lock size={16} color="#d97706" />
+              ) : (
+                <Unlock size={16} color={isDark ? '#94a3b8' : '#64748b'} />
+              )}
+            </Pressable>
 
-          {/* Delete Button */}
-          <Pressable
-            onPress={handleDelete}
-            hitSlop={8}
-            className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-red-950/50 border border-slate-200/80 dark:border-slate-700/80"
-            accessibilityLabel="Hapus catatan"
-          >
-            <Trash2 size={16} color={isDark ? '#ef4444' : '#dc2626'} />
-          </Pressable>
+            {/* Pin Button */}
+            <Pressable
+              onPress={handleTogglePin}
+              hitSlop={8}
+              className={`p-2 rounded-xl border ${
+                isPinned
+                  ? 'bg-amber-100 border-amber-300 dark:bg-amber-950/60 dark:border-amber-700'
+                  : 'bg-slate-100 border-slate-200/80 dark:bg-slate-800 dark:border-slate-700/80'
+              }`}
+              accessibilityLabel={isPinned ? 'Lepas sematan' : 'Sematkan catatan'}
+            >
+              <Pin
+                size={16}
+                color={isPinned ? '#d97706' : isDark ? '#94a3b8' : '#64748b'}
+                fill={isPinned ? '#d97706' : 'none'}
+              />
+            </Pressable>
 
-          {/* Finish / Save Button */}
-          <Pressable
-            onPress={() => router.back()}
-            hitSlop={8}
-            className="p-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800"
-            accessibilityLabel="Selesai"
-          >
-            <Check size={16} color="#ffffff" strokeWidth={2.5} />
-          </Pressable>
+            {/* Delete Button */}
+            <Pressable
+              onPress={handleDelete}
+              hitSlop={8}
+              className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-red-950/50 border border-slate-200/80 dark:border-slate-700/80"
+              accessibilityLabel="Hapus catatan"
+            >
+              <Trash2 size={16} color={isDark ? '#ef4444' : '#dc2626'} />
+            </Pressable>
+
+            {/* Finish / Save Button */}
+            <Pressable
+              onPress={handleBack}
+              hitSlop={8}
+              className="p-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800"
+              accessibilityLabel="Selesai"
+            >
+              <Check size={16} color="#ffffff" strokeWidth={2.5} />
+            </Pressable>
+          </View>
         </View>
       </View>
 
-      {/* Editor Content Area / Locked Prompt */}
+      {/* Editor Content Area / Locked Prompt with responsive desktop container */}
       {needsUnlock && existingNote ? (
         <View className="flex-1 items-center justify-center p-6 bg-slate-50 dark:bg-slate-950">
           <View className="w-16 h-16 rounded-2xl bg-amber-500/10 dark:bg-amber-500/20 items-center justify-center mb-4 border border-amber-500/20">
@@ -350,7 +371,7 @@ export default function NoteEditorScreen() {
             Catatan Terkunci
           </Text>
           <Text className="text-sm text-slate-500 dark:text-slate-400 text-center max-w-xs mb-5">
-            Catatan ini dienkripsi. Masukkan PIN atau gunakan Biometrik untuk membukanya.
+            Catatan ini dienkripsi dengan AES-256. Masukkan PIN atau gunakan Biometrik untuk membukanya.
           </Text>
           <Pressable
             onPress={() => setNeedsUnlock(true)}

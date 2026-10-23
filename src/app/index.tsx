@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView } from 'react-native';
+import React, { useMemo, useState, useEffect } from 'react';
+import { View, Text, ScrollView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Header } from '@/components/Header';
@@ -23,7 +23,53 @@ export default function HomeScreen() {
   const sessionUnlockedContent = useNotesStore((state) => state.sessionUnlockedContent);
   const setSessionUnlockedContent = useNotesStore((state) => state.setSessionUnlockedContent);
 
+  const serverUrl = useNotesStore((state) => state.serverUrl);
+  const autoSync = useNotesStore((state) => state.autoSync);
+  const triggerSync = useNotesStore((state) => state.triggerSync);
+
   const [unlockTarget, setUnlockTarget] = useState<Note | null>(null);
+
+  // Background Live Sync & Window Focus Listener for Realtime Sync
+  useEffect(() => {
+    if (!serverUrl || !autoSync) return;
+
+    // Initial sync
+    triggerSync().catch(() => {});
+
+    // Periodic poll every 5 seconds for live multi-device updates
+    const pollInterval = setInterval(() => {
+      triggerSync().catch(() => {});
+    }, 5000);
+
+    // Sync on window focus / app return
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const handleWindowFocus = () => {
+        triggerSync().catch(() => {});
+      };
+      window.addEventListener('focus', handleWindowFocus);
+      return () => {
+        clearInterval(pollInterval);
+        window.removeEventListener('focus', handleWindowFocus);
+      };
+    } else {
+      let sub: any = null;
+      try {
+        const { AppState } = require('react-native');
+        sub = AppState.addEventListener('change', (nextState: string) => {
+          if (nextState === 'active') {
+            triggerSync().catch(() => {});
+          }
+        });
+      } catch (e) {
+        // Fallback for environments without AppState
+      }
+
+      return () => {
+        clearInterval(pollInterval);
+        sub?.remove();
+      };
+    }
+  }, [serverUrl, autoSync, triggerSync]);
 
   // Filter notes based on search query
   const filteredNotes = useMemo(() => {
@@ -53,7 +99,8 @@ export default function HomeScreen() {
   );
 
   const handleOpenNote = (note: Note) => {
-    if (note.isLocked && !sessionUnlockedContent[note.id]) {
+    // If note is locked, always prompt for PIN/Biometric
+    if (note.isLocked) {
       setUnlockTarget(note);
       return;
     }
@@ -78,7 +125,8 @@ export default function HomeScreen() {
       edges={['top', 'left', 'right']}
       className="flex-1 bg-slate-50 dark:bg-slate-950"
     >
-      <View className="flex-1 w-full max-w-2xl mx-auto">
+      {/* Responsive Container: Max-w-6xl with nice padding on PC */}
+      <View className="flex-1 w-full max-w-6xl mx-auto px-2 sm:px-4 md:px-8">
         {/* App Header */}
         <Header totalNotes={notes.length} />
 
@@ -87,7 +135,7 @@ export default function HomeScreen() {
 
         {/* Notes List Content */}
         <ScrollView
-          className="flex-1 px-4 pt-2"
+          className="flex-1 px-2 sm:px-4 pt-2"
           contentContainerStyle={{ paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
         >
@@ -100,42 +148,56 @@ export default function HomeScreen() {
             <>
               {/* Pinned Notes Section */}
               {pinnedNotes.length > 0 && (
-                <View className="mb-4">
-                  <View className="flex-row items-center gap-1.5 mb-2.5 px-1">
-                    <Pin size={14} color="#d97706" />
+                <View className="mb-6">
+                  <View className="flex-row items-center gap-1.5 mb-3 px-1">
+                    <Pin size={15} color="#d97706" />
                     <Text className="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider">
                       Disematkan ({pinnedNotes.length})
                     </Text>
                   </View>
-                  {pinnedNotes.map((note) => (
-                    <NoteCard
-                      key={note.id}
-                      note={note}
-                      onPress={handleOpenNote}
-                      onTogglePin={togglePin}
-                      onDelete={deleteNote}
-                    />
-                  ))}
+                  {/* Responsive Grid for PC Web (1 col mobile, 2 col tablet, 3 col desktop) */}
+                  <View className="flex-row flex-wrap gap-3.5">
+                    {pinnedNotes.map((note) => (
+                      <View
+                        key={note.id}
+                        className="w-full md:w-[calc(50%-7px)] lg:w-[calc(33.333%-10px)]"
+                      >
+                        <NoteCard
+                          note={note}
+                          onPress={handleOpenNote}
+                          onTogglePin={togglePin}
+                          onDelete={deleteNote}
+                        />
+                      </View>
+                    ))}
+                  </View>
                 </View>
               )}
 
               {/* Regular Notes Section */}
               {regularNotes.length > 0 && (
-                <View className="mb-4">
+                <View className="mb-6">
                   {pinnedNotes.length > 0 && (
-                    <Text className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2.5 px-1">
+                    <Text className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3 px-1">
                       Catatan Lainnya ({regularNotes.length})
                     </Text>
                   )}
-                  {regularNotes.map((note) => (
-                    <NoteCard
-                      key={note.id}
-                      note={note}
-                      onPress={handleOpenNote}
-                      onTogglePin={togglePin}
-                      onDelete={deleteNote}
-                    />
-                  ))}
+                  {/* Responsive Grid for PC Web (1 col mobile, 2 col tablet, 3 col desktop) */}
+                  <View className="flex-row flex-wrap gap-3.5">
+                    {regularNotes.map((note) => (
+                      <View
+                        key={note.id}
+                        className="w-full md:w-[calc(50%-7px)] lg:w-[calc(33.333%-10px)]"
+                      >
+                        <NoteCard
+                          note={note}
+                          onPress={handleOpenNote}
+                          onTogglePin={togglePin}
+                          onDelete={deleteNote}
+                        />
+                      </View>
+                    ))}
+                  </View>
                 </View>
               )}
             </>
