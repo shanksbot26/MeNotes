@@ -27,6 +27,7 @@ export function NoteCard({
   return (
     <Pressable
       onPress={() => onPress?.(note)}
+      style={{ cursor: 'pointer' } as any}
       className="bg-white dark:bg-slate-800/90 rounded-2xl p-4 mb-3 border border-slate-200/90 dark:border-slate-700/80 shadow-sm active:scale-[0.99] transition-transform"
     >
       <View className="flex-row items-start justify-between gap-2 mb-1.5">

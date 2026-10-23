@@ -44,6 +44,7 @@ import {
 import './tiptap-editor.css';
 
 interface TiptapEditorDomProps {
+  noteId?: string;
   initialContent?: string;
   isDarkMode?: boolean;
   onContentChange?: (html: string) => Promise<void> | void;
@@ -120,6 +121,7 @@ const CustomTableHeader = TableHeader.extend({
 });
 
 export default function TiptapEditorDom({
+  noteId,
   initialContent = '',
   isDarkMode = false,
   onContentChange,
@@ -128,6 +130,7 @@ export default function TiptapEditorDom({
   const [showHighlightPicker, setShowHighlightPicker] = useState(false);
   const [showTableColorPicker, setShowTableColorPicker] = useState(false);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeNoteIdRef = useRef<string | null>(null);
 
   const handleUpdate = useCallback(
     (html: string) => {
@@ -158,7 +161,7 @@ export default function TiptapEditorDom({
         nested: true,
       }),
       Table.configure({
-        resizable: true,
+        resizable: false,
       }),
       TableRow,
       CustomTableHeader,
@@ -182,12 +185,16 @@ export default function TiptapEditorDom({
     };
   }, []);
 
-  // Update content if initialContent changes externally and editor is empty
+  // Synchronize content ONLY when switching to a different note (based on noteId)
+  // This prevents resetting cursor position, checkboxes, or table selections while typing!
   useEffect(() => {
-    if (editor && initialContent && editor.isEmpty) {
-      editor.commands.setContent(initialContent);
+    if (editor && noteId) {
+      if (activeNoteIdRef.current !== noteId) {
+        activeNoteIdRef.current = noteId;
+        editor.commands.setContent(initialContent || '');
+      }
     }
-  }, [editor, initialContent]);
+  }, [editor, noteId, initialContent]);
 
   if (!editor) {
     return (
@@ -577,20 +584,7 @@ export default function TiptapEditorDom({
       </div>
 
       {/* Editor Content Area with responsive desktop max-width */}
-      <div
-        className="tiptap-content-container"
-        onClick={(e) => {
-          // If checkbox clicked, ensure editor state is dispatched
-          const target = e.target as HTMLElement;
-          if (target && target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'checkbox') {
-            setTimeout(() => {
-              if (editor) {
-                onContentChange?.(editor.getHTML());
-              }
-            }, 60);
-          }
-        }}
-      >
+      <div className="tiptap-content-container">
         <div className="tiptap-canvas-wrapper">
           <EditorContent editor={editor} />
         </div>

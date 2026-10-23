@@ -55,8 +55,8 @@ export default function NoteEditorScreen() {
 
   const existingNote = notes.find((n) => n.id === id);
 
-  const [currentId] = useState<string>(() => {
-    return existingNote ? existingNote.id : id === 'new' ? generateId() : id;
+  const [currentId, setCurrentId] = useState<string>(() => {
+    return existingNote ? existingNote.id : id === 'new' ? generateId() : (id as string);
   });
 
   const [title, setTitle] = useState<string>(() => {
@@ -86,6 +86,44 @@ export default function NoteEditorScreen() {
     }
     return existingNote.content;
   });
+
+  // Synchronize state immediately whenever id parameter changes (e.g. user clicks another note)
+  useEffect(() => {
+    if (!id) return;
+
+    if (id === 'new') {
+      const newId = generateId();
+      setCurrentId(newId);
+      setTitle('');
+      setContent('');
+      setIsPinned(false);
+      setIsLocked(false);
+      setNeedsUnlock(false);
+      isCreatedInStoreRef.current = false;
+      activePinRef.current = null;
+    } else {
+      const targetNote = notes.find((n) => n.id === id);
+      if (targetNote) {
+        setCurrentId(targetNote.id);
+        setTitle(targetNote.title);
+        setIsPinned(!!targetNote.isPinned);
+        setIsLocked(!!targetNote.isLocked);
+        isCreatedInStoreRef.current = true;
+
+        if (targetNote.isLocked && !sessionUnlockedContent[targetNote.id]) {
+          setNeedsUnlock(true);
+          setContent('');
+        } else {
+          setNeedsUnlock(false);
+          setContent(
+            targetNote.isLocked
+              ? sessionUnlockedContent[targetNote.id] || ''
+              : targetNote.content
+          );
+        }
+      }
+    }
+  }, [id]);
 
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving'>('saved');
   const [showLockModal, setShowLockModal] = useState<boolean>(false);
@@ -392,6 +430,7 @@ export default function NoteEditorScreen() {
       ) : (
         <View className="flex-1 w-full bg-white dark:bg-slate-950">
           <TiptapEditorDom
+            noteId={currentId}
             initialContent={content}
             isDarkMode={isDark}
             onContentChange={handleContentChange}

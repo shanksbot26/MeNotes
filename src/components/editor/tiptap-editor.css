@@ -315,11 +315,19 @@ li[data-type="taskitem" i][data-checked="true"] > p,
   min-width: 60px;
   min-height: 36px;
   border: 1px solid #cbd5e1;
-  padding: 10px 12px;
+  padding: 8px 10px;
   vertical-align: top;
   box-sizing: border-box;
   position: relative;
   outline: none;
+}
+
+.tiptap td > p,
+.tiptap th > p {
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1.5;
+  min-height: 1.5em;
 }
 
 .dark-theme .tiptap td,

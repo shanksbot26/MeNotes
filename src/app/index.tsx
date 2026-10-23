@@ -174,6 +174,7 @@ export default function HomeScreen() {
         <ScrollView
           className="flex-1 px-2 sm:px-4 pt-2"
           contentContainerStyle={{ paddingBottom: 100 }}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
           {filteredNotes.length === 0 ? (
