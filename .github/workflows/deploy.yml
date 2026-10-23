@@ -13,17 +13,49 @@ concurrency:
 
 jobs:
   deploy:
-    name: Build & Deploy Container
+    name: Build & Deploy Container to /root/aplikasi/MeNote
     runs-on: self-hosted
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          clean: false # Pertahankan konfigurasi lokal yang tidak di-track Git
+          clean: false
 
-      - name: Setup Environment (.env)
+      - name: Verify Docker & Docker Compose
         run: |
-          echo "⚙️ [1/5] Mempersiapkan file konfigurasi environment (.env)..."
+          echo "🔍 [1/5] Memeriksa instalasi Docker & Docker Compose..."
+          docker --version
+          
+          if docker compose version >/dev/null 2>&1; then
+            echo "DOCKER_COMPOSE_CMD=docker compose" >> $GITHUB_ENV
+            echo "✅ Menggunakan 'docker compose' (v2)"
+          elif command -v docker-compose >/dev/null 2>&1; then
+            echo "DOCKER_COMPOSE_CMD=docker-compose" >> $GITHUB_ENV
+            echo "✅ Menggunakan 'docker-compose' (v1)"
+          else
+            echo "❌ Docker Compose tidak ditemukan di server self-hosted!"
+            exit 1
+          fi
+
+      - name: Sync Source Code to Target Directory (/root/aplikasi/MeNote)
+        run: |
+          echo "📁 [2/5] Menyiapkan direktori aplikasi di /root/aplikasi/MeNote..."
+          TARGET_DIR="${{ secrets.DEPLOY_PATH || '/root/aplikasi/MeNote' }}"
+          mkdir -p "$TARGET_DIR"
+
+          echo "Sinkronisasi kode dari runner workspace ke $TARGET_DIR..."
+          if command -v rsync >/dev/null 2>&1; then
+            rsync -av --delete --exclude='.git' --exclude='data' --exclude='.env' ./ "$TARGET_DIR/"
+          else
+            # Fallback jika rsync belum terinstal
+            cp -r ./* "$TARGET_DIR/" 2>/dev/null || true
+          fi
+          echo "TARGET_DIR=$TARGET_DIR" >> $GITHUB_ENV
+
+      - name: Setup Target Environment (.env)
+        run: |
+          echo "⚙️ [3/5] Mempersiapkan file konfigurasi di $TARGET_DIR/.env..."
+          cd "$TARGET_DIR"
           
           # Buat file .env jika belum ada dari template .env.example
           if [ ! -f .env ]; then
@@ -55,36 +87,22 @@ jobs:
             echo "🌐 PORT diperbarui dari GitHub Secrets."
           fi
 
-          # Pastikan nilai standar selalu ada
+          # Pastikan nilai default selalu ada
           grep -q "^PORT=" .env || echo "PORT=3000" >> .env
           grep -q "^NODE_ENV=" .env || echo "NODE_ENV=production" >> .env
           grep -q "^DATA_DIR=" .env || echo "DATA_DIR=/app/data" >> .env
           grep -q "^SYNC_SECRET=" .env || echo "SYNC_SECRET=akuiki26" >> .env
 
-      - name: Verify Docker & Docker Compose
-        run: |
-          echo "🔍 [2/5] Memeriksa instalasi Docker & Docker Compose..."
-          docker --version
-          
-          if docker compose version >/dev/null 2>&1; then
-            echo "DOCKER_COMPOSE_CMD=docker compose" >> $GITHUB_ENV
-            echo "✅ Menggunakan 'docker compose' (v2)"
-          elif command -v docker-compose >/dev/null 2>&1; then
-            echo "DOCKER_COMPOSE_CMD=docker-compose" >> $GITHUB_ENV
-            echo "✅ Menggunakan 'docker-compose' (v1)"
-          else
-            echo "❌ Docker Compose tidak ditemukan di server self-hosted!"
-            exit 1
-          fi
-
       - name: Build & Start Container
         run: |
-          echo "🐳 [3/5] Membangun ulang dan menyalakan container MeNotes..."
+          echo "🐳 [4/5] Membangun ulang dan menyalakan container MeNotes di $TARGET_DIR..."
+          cd "$TARGET_DIR"
           $DOCKER_COMPOSE_CMD up -d --build --remove-orphans
 
       - name: Verify Health Check
         run: |
-          echo "🩺 [4/5] Memeriksa status kesehatan aplikasi (/api/health)..."
+          echo "🩺 [5/5] Memeriksa status kesehatan aplikasi (/api/health)..."
+          cd "$TARGET_DIR"
           PORT_VAL=$(grep -E '^PORT=' .env | cut -d '=' -f2 | tr -d ' ' || echo "3000")
           HEALTH_URL="http://127.0.0.1:${PORT_VAL}/api/health"
           echo "Target Health Check: $HEALTH_URL"
@@ -102,6 +120,7 @@ jobs:
           if [ $SUCCESS -eq 1 ]; then
             echo "===================================================="
             echo "✅ MeNotes berhasil aktif dan sehat di port $PORT_VAL!"
+            echo "Lokasi Aplikasi: $TARGET_DIR"
             echo "===================================================="
           else
             echo "❌ MeNotes gagal merespons health check! Log container:"
@@ -112,6 +131,5 @@ jobs:
       - name: Clean Up Unused Docker Images
         if: always()
         run: |
-          echo "🧹 [5/5] Membersihkan image Docker lama yang tidak terpakai..."
+          echo "🧹 Membersihkan image Docker lama yang tidak terpakai..."
           docker image prune -f
-
